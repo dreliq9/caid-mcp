@@ -3,7 +3,7 @@
 import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
-import cadquery as cq
+from build123d import Vector, Solid
 from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from caid_mcp.core import scene, require_object
 
@@ -51,44 +51,83 @@ MATERIAL_DENSITIES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Face selector helper — translates CQ-style selectors to build123d faces
+# ---------------------------------------------------------------------------
+
+def _select_faces_by_selector(shape, selector: str):
+    """Select faces from a shape using a CadQuery-style selector string.
+
+    Supports: ">X", "<X", ">Y", "<Y", ">Z", "<Z" (extreme face along axis).
+    Returns a list of matching faces.
+    """
+    all_faces = shape.faces()
+    if not all_faces:
+        return []
+
+    sel = selector.strip()
+    if len(sel) >= 2 and sel[0] in (">", "<") and sel[1:] in ("X", "Y", "Z"):
+        direction = sel[0]
+        axis = sel[1:]
+        axis_map = {"X": 0, "Y": 1, "Z": 2}
+        idx = axis_map[axis]
+
+        def _center_component(face):
+            c = face.center()
+            return (c.X, c.Y, c.Z)[idx]
+
+        if direction == ">":
+            extreme = max(_center_component(f) for f in all_faces)
+        else:
+            extreme = min(_center_component(f) for f in all_faces)
+
+        tol = 1e-6
+        return [f for f in all_faces if abs(_center_component(f) - extreme) < tol]
+
+    raise ValueError(
+        f"Unsupported face selector '{selector}'. "
+        "Supported: '>X', '<X', '>Y', '<Y', '>Z', '<Z'"
+    )
+
+
 def _edge_info(idx: int, edge) -> dict:
     """Extract useful info from a single Edge."""
-    verts = edge.Vertices()
-    start = verts[0].Center() if len(verts) > 0 else None
-    end = verts[1].Center() if len(verts) > 1 else verts[0].Center()
-    mid = edge.Center()
+    verts = edge.vertices()
+    start = verts[0].center() if len(verts) > 0 else None
+    end = verts[1].center() if len(verts) > 1 else verts[0].center()
+    mid = edge.center()
     return {
         "index": idx,
-        "length_mm": round(edge.Length(), 3),
-        "start": [round(start.x, 3), round(start.y, 3), round(start.z, 3)] if start else None,
-        "end": [round(end.x, 3), round(end.y, 3), round(end.z, 3)],
-        "midpoint": [round(mid.x, 3), round(mid.y, 3), round(mid.z, 3)],
-        "type": edge.geomType(),
+        "length_mm": round(edge.length, 3),
+        "start": [round(start.X, 3), round(start.Y, 3), round(start.Z, 3)] if start else None,
+        "end": [round(end.X, 3), round(end.Y, 3), round(end.Z, 3)],
+        "midpoint": [round(mid.X, 3), round(mid.Y, 3), round(mid.Z, 3)],
+        "type": edge.geom_type(),
     }
 
 
 def _face_info(idx: int, face) -> dict:
     """Extract useful info from a single Face."""
-    center = face.Center()
-    bb = face.BoundingBox()
+    center = face.center()
+    bb = face.bounding_box()
     # Normal at center of face
     try:
-        normal = face.normalAt(face.Center())
-        normal_vec = [round(normal.x, 3), round(normal.y, 3), round(normal.z, 3)]
+        normal = face.normal_at(face.center())
+        normal_vec = [round(normal.X, 3), round(normal.Y, 3), round(normal.Z, 3)]
     except Exception:
         normal_vec = None
     return {
         "index": idx,
-        "area_mm2": round(face.Area(), 3),
-        "center": [round(center.x, 3), round(center.y, 3), round(center.z, 3)],
+        "area_mm2": round(face.area, 3),
+        "center": [round(center.X, 3), round(center.Y, 3), round(center.Z, 3)],
         "normal": normal_vec,
-        "type": face.geomType(),
+        "type": face.geom_type(),
         "bounds": {
-            "x": [round(bb.xmin, 3), round(bb.xmax, 3)],
-            "y": [round(bb.ymin, 3), round(bb.ymax, 3)],
-            "z": [round(bb.zmin, 3), round(bb.zmax, 3)],
+            "x": [round(bb.min.X, 3), round(bb.max.X, 3)],
+            "y": [round(bb.min.Y, 3), round(bb.max.Y, 3)],
+            "z": [round(bb.min.Z, 3), round(bb.max.Z, 3)],
         },
-        "num_edges": len(face.Edges()),
+        "num_edges": len(face.edges()),
     }
 
 
@@ -104,20 +143,19 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             name: Name of the object.
-            face_selector: Optional CadQuery face selector to limit to edges of a
+            face_selector: Optional face selector to limit to edges of a
                           specific face (e.g. ">Z" for top face, "<Z" for bottom).
                           If omitted, lists all edges on the solid.
         """
         try:
             shape = require_object(name)
             if face_selector:
-                wp = cq.Workplane("XY").add(shape)
-                faces = wp.faces(face_selector).vals()
+                faces = _select_faces_by_selector(shape, face_selector)
                 edges = []
                 for f in faces:
-                    edges.extend(f.Edges())
+                    edges.extend(f.edges())
             else:
-                edges = shape.Edges()
+                edges = shape.edges()
 
             if not edges:
                 return f"No edges found on '{name}'" + (f" with selector '{face_selector}'" if face_selector else "")
@@ -144,7 +182,7 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            faces = shape.Faces()
+            faces = shape.faces()
             result = [_face_info(i, f) for i, f in enumerate(faces)]
             return json.dumps({
                 "object": name,
@@ -186,21 +224,21 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            bb = shape.BoundingBox()
-            com = shape.Center()
+            bb = shape.bounding_box()
+            com = shape.center()
             info = {
                 "name": name,
-                "volume_mm3": round(shape.Volume(), 3),
-                "surface_area_mm2": round(shape.Area(), 3),
-                "center_of_mass": [round(com.x, 3), round(com.y, 3), round(com.z, 3)],
+                "volume_mm3": round(shape.volume, 3),
+                "surface_area_mm2": round(shape.area, 3),
+                "center_of_mass": [round(com.X, 3), round(com.Y, 3), round(com.Z, 3)],
                 "bounding_box": {
-                    "min": [round(bb.xmin, 3), round(bb.ymin, 3), round(bb.zmin, 3)],
-                    "max": [round(bb.xmax, 3), round(bb.ymax, 3), round(bb.zmax, 3)],
-                    "size": [round(bb.xlen, 3), round(bb.ylen, 3), round(bb.zlen, 3)],
+                    "min": [round(bb.min.X, 3), round(bb.min.Y, 3), round(bb.min.Z, 3)],
+                    "max": [round(bb.max.X, 3), round(bb.max.Y, 3), round(bb.max.Z, 3)],
+                    "size": [round(bb.size.X, 3), round(bb.size.Y, 3), round(bb.size.Z, 3)],
                 },
-                "num_faces": len(shape.Faces()),
-                "num_edges": len(shape.Edges()),
-                "num_vertices": len(shape.Vertices()),
+                "num_faces": len(shape.faces()),
+                "num_edges": len(shape.edges()),
+                "num_vertices": len(shape.vertices()),
             }
             return json.dumps(info, indent=2)
         except Exception as e:
@@ -232,11 +270,11 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            vol_mm3 = shape.Volume()
+            vol_mm3 = shape.volume
             vol_cm3 = vol_mm3 / 1000.0  # 1 cm³ = 1000 mm³
-            area_mm2 = shape.Area()
-            com = shape.Center()
-            bb = shape.BoundingBox()
+            area_mm2 = shape.area
+            com = shape.center()
+            bb = shape.bounding_box()
 
             # Determine density
             rho = density
@@ -270,11 +308,11 @@ def register(mcp: FastMCP) -> None:
                 "mass_grams": round(mass_g, 3),
                 "mass_kg": round(mass_kg, 6),
                 "weight_newtons": round(weight_n, 4),
-                "center_of_mass": [round(com.x, 3), round(com.y, 3), round(com.z, 3)],
+                "center_of_mass": [round(com.X, 3), round(com.Y, 3), round(com.Z, 3)],
                 "bounding_box": {
-                    "min": [round(bb.xmin, 3), round(bb.ymin, 3), round(bb.zmin, 3)],
-                    "max": [round(bb.xmax, 3), round(bb.ymax, 3), round(bb.zmax, 3)],
-                    "size": [round(bb.xlen, 3), round(bb.ylen, 3), round(bb.zlen, 3)],
+                    "min": [round(bb.min.X, 3), round(bb.min.Y, 3), round(bb.min.Z, 3)],
+                    "max": [round(bb.max.X, 3), round(bb.max.Y, 3), round(bb.max.Z, 3)],
+                    "size": [round(bb.size.X, 3), round(bb.size.Y, 3), round(bb.size.Z, 3)],
                 },
             }
             return json.dumps(info, indent=2)
@@ -300,13 +338,13 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            target = cq.Vector(x, y, z)
-            edges = shape.Edges()
+            target = Vector(x, y, z)
+            edges = shape.edges()
 
             scored = []
             for i, edge in enumerate(edges):
-                mid = edge.Center()
-                dist = (target - cq.Vector(mid.x, mid.y, mid.z)).Length
+                mid = edge.center()
+                dist = (target - Vector(mid.X, mid.Y, mid.Z)).length
                 scored.append((dist, i, edge))
 
             scored.sort(key=lambda t: t[0])
@@ -342,13 +380,13 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            target = cq.Vector(x, y, z)
-            faces = shape.Faces()
+            target = Vector(x, y, z)
+            faces = shape.faces()
 
             scored = []
             for i, face in enumerate(faces):
-                center = face.Center()
-                dist = (target - cq.Vector(center.x, center.y, center.z)).Length
+                center = face.center()
+                dist = (target - Vector(center.X, center.Y, center.Z)).length
                 scored.append((dist, i, face))
 
             scored.sort(key=lambda t: t[0])

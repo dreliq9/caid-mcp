@@ -2,8 +2,10 @@
 
 import math
 from typing import Optional
-import cadquery as cq
-from cadquery import Vector
+from build123d import (
+    BuildPart, BuildSketch, RegularPolygon, extrude,
+    Solid, Vector,
+)
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid_mcp.core import store_object, require_object
@@ -102,14 +104,51 @@ TAP_DRILL = {
 
 def _hex_prism(across_flats: float, height: float):
     """Create a regular hexagonal prism from across-flats dimension."""
-    # Across flats -> circumradius
     s = across_flats / 2
-    r = s / math.cos(math.radians(30))  # circumscribed radius
-    pts = []
-    for i in range(6):
-        angle = math.radians(60 * i + 30)  # start rotated 30° for flat-on-bottom
-        pts.append((r * math.cos(angle), r * math.sin(angle)))
-    return cq.Workplane("XY").polyline(pts).close().extrude(height).val()
+    circumradius = s / math.cos(math.radians(30))
+    with BuildPart() as part:
+        with BuildSketch():
+            RegularPolygon(circumradius, 6, rotation=30)
+        extrude(amount=height)
+    return part.part.solids()[0]
+
+
+def _cut_hole_on_face(shape, face, radius, depth):
+    """Cut a cylindrical hole centered on a face, along its inward normal.
+
+    Returns a ForgeResult-style tuple (result_shape, success_bool).
+    """
+    from build123d import Axis
+
+    center = face.center()
+    normal = face.normal_at(center)
+
+    if depth is None:
+        bb = shape.bounding_box()
+        depth = bb.diagonal * 2
+
+    cyl = Solid.make_cylinder(radius, depth)
+    neg_normal = Vector(-normal.X, -normal.Y, -normal.Z)
+    z_axis = Vector(0, 0, 1)
+
+    start = Vector(
+        center.X + normal.X * depth * 0.1,
+        center.Y + normal.Y * depth * 0.1,
+        center.Z + normal.Z * depth * 0.1,
+    )
+
+    cross = z_axis.cross(neg_normal)
+    if cross.length > 1e-10:
+        angle = z_axis.get_angle(neg_normal) * 180.0 / math.pi
+        ax = Axis(Vector(0, 0, 0), cross)
+        cyl = cyl.rotate(ax, angle)
+    elif neg_normal.Z < 0:
+        ax = Axis(Vector(0, 0, 0), Vector(1, 0, 0))
+        cyl = cyl.rotate(ax, 180.0)
+
+    cyl = cyl.translate(start)
+    fr = caid.boolean_cut(shape, cyl)
+    return fr
 
 
 def register(mcp: FastMCP) -> None:
@@ -184,25 +223,15 @@ def register(mcp: FastMCP) -> None:
             # Build shank (unthreaded portion) — overlap 0.01mm into head for robust union
             parts = [head]
             if shank_length > 0.1:
-                shank = (
-                    cq.Workplane("XY")
-                    .workplane(offset=0.01)
-                    .circle(nom_dia / 2)
-                    .extrude(-(shank_length + 0.01))
-                    .val()
-                )
+                shank = Solid.make_cylinder(nom_dia / 2, shank_length + 0.01)
+                shank = shank.translate(Vector(0, 0, -(shank_length + 0.01) + 0.01))
                 parts.append(shank)
 
             # Build threaded portion (cosmetic: minor diameter cylinder)
             # Overlap 0.01mm into shank for robust union
             thread_start_z = -shank_length + 0.01
-            thread = (
-                cq.Workplane("XY")
-                .workplane(offset=thread_start_z)
-                .circle(minor_dia / 2)
-                .extrude(-(thread_length + 0.01))
-                .val()
-            )
+            thread = Solid.make_cylinder(minor_dia / 2, thread_length + 0.01)
+            thread = thread.translate(Vector(0, 0, thread_start_z - (thread_length + 0.01)))
             parts.append(thread)
 
             # Union all parts
@@ -214,7 +243,7 @@ def register(mcp: FastMCP) -> None:
                 result = union_fr.shape
 
             store_object(name, result)
-            vol = result.Volume()
+            vol = result.volume
             return (
                 f"OK Created {size_upper}x{length} bolt '{name}': "
                 f"head={af}mm AF x {head_h}mm, "
@@ -245,9 +274,9 @@ def register(mcp: FastMCP) -> None:
             # Hex body
             hex_body = _hex_prism(af, height)
 
-            # Through hole
-            hole = cq.Workplane("XY").circle(nom_dia / 2).extrude(height + 1).val()
-            hole = caid.translate(hole, Vector(0, 0, -0.5)).shape
+            # Through hole — extend past both ends for clean cut
+            hole = Solid.make_cylinder(nom_dia / 2, height + 1)
+            hole = hole.translate(Vector(0, 0, -0.5))
 
             # Cut hole from hex
             fr = caid.boolean_cut(hex_body, hole)
@@ -261,7 +290,7 @@ def register(mcp: FastMCP) -> None:
             else:
                 store_object(name, centered.shape)
 
-            vol = (centered.shape or fr.shape).Volume()
+            vol = (centered.shape or fr.shape).volume
             return (
                 f"OK Created {size_upper} nut '{name}': "
                 f"{af}mm AF x {height}mm "
@@ -288,10 +317,10 @@ def register(mcp: FastMCP) -> None:
             inner_d, outer_d, thickness = METRIC_WASHER[size_upper]
 
             # Outer cylinder
-            outer = cq.Workplane("XY").circle(outer_d / 2).extrude(thickness).val()
-            # Inner hole
-            inner = cq.Workplane("XY").circle(inner_d / 2).extrude(thickness + 1).val()
-            inner = caid.translate(inner, Vector(0, 0, -0.5)).shape
+            outer = Solid.make_cylinder(outer_d / 2, thickness)
+            # Inner hole — extend past both ends for clean cut
+            inner = Solid.make_cylinder(inner_d / 2, thickness + 1)
+            inner = inner.translate(Vector(0, 0, -0.5))
 
             fr = caid.boolean_cut(outer, inner)
             if fr.shape is None:
@@ -301,7 +330,7 @@ def register(mcp: FastMCP) -> None:
             centered = caid.translate(fr.shape, Vector(0, 0, -thickness / 2))
             shape = centered.shape or fr.shape
             store_object(name, shape)
-            vol = shape.Volume()
+            vol = shape.volume
             return (
                 f"OK Created {size_upper} washer '{name}': "
                 f"ID={inner_d}mm, OD={outer_d}mm, t={thickness}mm "
@@ -324,7 +353,7 @@ def register(mcp: FastMCP) -> None:
             name: Name of existing object to modify.
             size: Metric size, e.g. "M6".
             fit: Hole fit class: "close", "normal", or "loose". Default "normal".
-            face_selector: CadQuery face selector for drill face (default ">Z").
+            face_selector: Face selector string (e.g. ">Z", "<Y"). Default ">Z".
             face_index: Face index from list_faces. Overrides face_selector.
         """
         try:
@@ -338,18 +367,24 @@ def register(mcp: FastMCP) -> None:
                 return "FAIL fit must be 'close', 'normal', or 'loose'"
 
             hole_dia = CLEARANCE_HOLES[size_upper][fit_idx]
+            hole_radius = hole_dia / 2
 
             shape = require_object(name)
-            wp = cq.Workplane("XY").add(shape)
 
             if face_index is not None:
                 from caid_mcp.tools.modify import _make_face_selector
-                selector = _make_face_selector(shape, face_index)
+                face = _make_face_selector(shape, face_index)
+                fr = _cut_hole_on_face(shape, face, hole_radius, depth=None)
+                if fr.shape is None:
+                    return f"FAIL Hole cut failed: {fr.diagnostics}"
+                store_object(name, fr.shape)
             else:
                 selector = face_selector or ">Z"
+                fr = caid.add_hole(shape, hole_radius, depth=None, face_selector=selector)
+                if fr.shape is None:
+                    return f"FAIL Hole cut failed: {fr.diagnostics}"
+                store_object(name, fr.shape)
 
-            result = wp.faces(selector).workplane().hole(hole_dia)
-            store_object(name, result)
             return (
                 f"OK Added {size_upper} clearance hole ({fit} fit, dia={hole_dia}mm) "
                 f"to '{name}'"
@@ -372,7 +407,7 @@ def register(mcp: FastMCP) -> None:
             name: Name of existing object to modify.
             size: Metric size, e.g. "M6".
             depth: Hole depth (mm). If omitted, drills through.
-            face_selector: CadQuery face selector for drill face (default ">Z").
+            face_selector: Face selector string (e.g. ">Z", "<Y"). Default ">Z".
             face_index: Face index from list_faces. Overrides face_selector.
         """
         try:
@@ -381,22 +416,24 @@ def register(mcp: FastMCP) -> None:
                 return f"FAIL Unknown size '{size}'. Available: {', '.join(TAP_DRILL.keys())}"
 
             drill_dia = TAP_DRILL[size_upper]
+            drill_radius = drill_dia / 2
 
             shape = require_object(name)
-            wp = cq.Workplane("XY").add(shape)
 
             if face_index is not None:
                 from caid_mcp.tools.modify import _make_face_selector
-                selector = _make_face_selector(shape, face_index)
+                face = _make_face_selector(shape, face_index)
+                fr = _cut_hole_on_face(shape, face, drill_radius, depth=depth)
+                if fr.shape is None:
+                    return f"FAIL Hole cut failed: {fr.diagnostics}"
+                store_object(name, fr.shape)
             else:
                 selector = face_selector or ">Z"
+                fr = caid.add_hole(shape, drill_radius, depth=depth, face_selector=selector)
+                if fr.shape is None:
+                    return f"FAIL Hole cut failed: {fr.diagnostics}"
+                store_object(name, fr.shape)
 
-            if depth is not None:
-                result = wp.faces(selector).workplane().hole(drill_dia, depth)
-            else:
-                result = wp.faces(selector).workplane().hole(drill_dia)
-
-            store_object(name, result)
             return (
                 f"OK Added {size_upper} tap hole (dia={drill_dia}mm"
                 + (f", depth={depth}mm" if depth is not None else ", through")

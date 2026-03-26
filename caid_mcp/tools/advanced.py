@@ -5,8 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import cadquery as cq
-from cadquery import Vector
+from build123d import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid_mcp.core import require_object, store_object, OUTPUT_DIR, log
@@ -17,7 +16,7 @@ def _run_script_in_subprocess(
     result_brep_path: Optional[Path] = None,
     timeout: int = 120,
 ) -> dict:
-    """Run a CadQuery script in an isolated subprocess.
+    """Run a build123d/CAiD script in an isolated subprocess.
 
     Returns dict with keys: ok (bool), stdout (str), stderr (str), returncode (int).
     If result_brep_path is set, the subprocess wrapper will export the 'result'
@@ -28,21 +27,17 @@ def _run_script_in_subprocess(
     if result_brep_path:
         export_snippet = (
             'if "result" in dir() or "result" in globals():\n'
-            '    import cadquery as _cq\n'
             '    from caid.result import ForgeResult as _FR\n'
             '    _obj = result\n'
             '    if isinstance(_obj, _FR):\n'
             '        _obj = _obj.unwrap()\n'
-            '    elif isinstance(_obj, _cq.Workplane):\n'
-            '        _obj = _obj.val()\n'
             '    from OCP.BRepTools import BRepTools\n'
             f'    BRepTools.Write_s(_obj.wrapped, "{result_brep_path}")\n'
             '    print("__RESULT_EXPORTED__")\n'
         )
 
     wrapper = (
-        "import cadquery as cq\n"
-        "from cadquery import Vector, exporters\n"
+        "from build123d import *\n"
         "import caid\n"
         "from pathlib import Path\n"
         f"OUTPUT_DIR = Path(\"{OUTPUT_DIR}\")\n"
@@ -81,15 +76,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def run_cadquery_script(script: str, result_name: Optional[str] = None) -> str:
-        """Execute CadQuery/CAiD Python code in an isolated subprocess.
+        """Execute build123d/CAiD Python code in an isolated subprocess.
 
         Runs in a separate process so that OCCT segfaults cannot crash the
         MCP server. The subprocess has access to:
-        - cq: the cadquery module
+        - build123d: all build123d classes and functions (star import)
         - caid: the CAiD module (validated geometry operations)
-        - Vector: cadquery.Vector for convenience
+        - Vector: build123d Vector for convenience
         - OUTPUT_DIR: Path to output directory
-        - exporters: CadQuery export module
 
         Note: the subprocess does NOT have access to the live scene dict.
         To use existing scene objects, import them from STEP/BREP files.
@@ -108,7 +102,7 @@ def register(mcp: FastMCP) -> None:
         run = _run_script_in_subprocess(script, result_brep_path=brep_path)
 
         if run["returncode"] == 139 or run["returncode"] == -11:
-            log.warning("CadQuery script segfaulted (OCCT crash) — server is safe")
+            log.warning("Script segfaulted (OCCT crash) — server is safe")
             return (
                 "FAIL Script crashed with a segfault (OCCT kernel error). "
                 "The MCP server is still running. This typically happens with "
@@ -344,7 +338,7 @@ def register(mcp: FastMCP) -> None:
             "advanced": {
                 "description": "Scripting, patterns, and power-user tools",
                 "tools": [
-                    "run_cadquery_script — execute CadQuery/CAiD Python code",
+                    "run_cadquery_script — execute build123d/CAiD Python code",
                     "create_linear_pattern — rectangular grid pattern",
                     "create_circular_pattern — polar/radial pattern (bolt circles, spokes)",
                     "discover_tools — this tool (browse available tools)",

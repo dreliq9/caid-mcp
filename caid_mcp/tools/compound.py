@@ -2,7 +2,7 @@
 
 import json
 from typing import Optional
-from cadquery import Vector
+from build123d import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid_mcp.core import require_object, store_object, format_result

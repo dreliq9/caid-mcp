@@ -14,9 +14,9 @@ from mcp.server.fastmcp import FastMCP
 
 # Verify dependencies
 try:
-    import cadquery as cq
+    import build123d
 except ImportError:
-    print("CadQuery is not installed. Install with: pip install cadquery", file=sys.stderr)
+    print("build123d is not installed. Install with: pip install build123d", file=sys.stderr)
     sys.exit(1)
 
 try:

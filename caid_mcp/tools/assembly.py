@@ -1,6 +1,6 @@
 """Multi-part assembly management tools — backed by caid.assembly."""
 
-from cadquery import Vector
+from build123d import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid.assembly import Assembly, Part

@@ -4,8 +4,7 @@ import tempfile
 from typing import Optional
 from pathlib import Path
 
-import cadquery as cq
-from cadquery import exporters
+from build123d import ExportSVG, export_stl as b123d_export_stl, Axis
 from mcp.server.fastmcp import FastMCP
 import caid
 import numpy as np
@@ -18,22 +17,47 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from caid_mcp.core import scene, require_object, OUTPUT_DIR, log
 
 
-def _wrap_for_svg(shape) -> cq.Workplane:
-    """Wrap a raw shape in a Workplane for CQ's SVG exporter."""
-    return cq.Workplane("XY").add(shape)
+# Rotation angles to orient a shape so its XY projection matches the desired view.
+# Each entry is a sequence of (Axis, degrees) rotations applied in order.
+_SVG_VIEW_ROTATIONS = {
+    "isometric": [(Axis.X, -35.264), (Axis.Z, 45)],
+    "front":     [],                          # looking down -Y → XY projection as-is
+    "top":       [(Axis.X, 90)],              # look down -Z → rotate X+90
+    "right":     [(Axis.Z, -90)],             # look down -X → rotate Z-90
+}
+
+
+def _orient_for_svg(shape, projection: str = "isometric"):
+    """Rotate a shape so that its XY projection corresponds to the named view."""
+    rotations = _SVG_VIEW_ROTATIONS.get(projection, _SVG_VIEW_ROTATIONS["isometric"])
+    oriented = shape
+    for axis, degrees in rotations:
+        oriented = oriented.rotate(axis, degrees)
+    return oriented
+
+
+def _export_svg_string(shape, projection: str = "isometric") -> str:
+    """Export a shape to SVG string via build123d ExportSVG."""
+    oriented = _orient_for_svg(shape, projection)
+    svg = ExportSVG(margin=2)
+    svg.add_layer("default")
+    svg.add_shape(oriented, layer="default")
+    tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
+    tmp.close()
+    try:
+        svg.write(tmp.name)
+        with open(tmp.name) as f:
+            return f.read()
+    finally:
+        Path(tmp.name).unlink(missing_ok=True)
 
 
 def _shape_to_trimesh(shape, tolerance: float = 0.1) -> trimesh.Trimesh:
-    """Tessellate an OCP shape to a trimesh mesh via temp STL."""
-    wp = cq.Workplane("XY").add(shape)
+    """Tessellate a build123d shape to a trimesh mesh via temp STL."""
     tmp = tempfile.NamedTemporaryFile(suffix=".stl", delete=False)
     tmp.close()
     try:
-        exporters.export(
-            wp, tmp.name,
-            exportType=exporters.ExportTypes.STL,
-            tolerance=tolerance,
-        )
+        b123d_export_stl(shape, tmp.name, tolerance=tolerance)
         mesh = trimesh.load(tmp.name)
     finally:
         Path(tmp.name).unlink(missing_ok=True)
@@ -149,38 +173,13 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            wp = _wrap_for_svg(shape)
-
-            proj_map = {
-                "isometric": (1, -1, 0.5),
-                "front": (0, -1, 0),
-                "top": (0, 0, -1),
-                "right": (-1, 0, 0),
-            }
-            proj_dir = proj_map.get(projection, proj_map["isometric"])
-
-            tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
-            tmp.close()
-            exporters.export(
-                wp, tmp.name,
-                exportType=exporters.ExportTypes.SVG,
-                opt={
-                    "width": width,
-                    "height": height,
-                    "projectionDir": proj_dir,
-                    "showAxes": False,
-                    "showHidden": False,
-                },
-            )
-            with open(tmp.name) as f:
-                svg_content = f.read()
-            Path(tmp.name).unlink(missing_ok=True)
+            svg_content = _export_svg_string(shape, projection=projection)
 
             svg_path = OUTPUT_DIR / f"{name}_preview.svg"
             svg_path.write_text(svg_content)
 
-            bb = shape.BoundingBox()
-            dims = f"{bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+            bb = shape.bounding_box()
+            dims = f"{bb.size.X:.1f} x {bb.size.Y:.1f} x {bb.size.Z:.1f} mm"
 
             return (
                 f"OK Preview of '{name}' ({dims}, {projection} view):\n"
@@ -214,23 +213,7 @@ def register(mcp: FastMCP) -> None:
                 except Exception:
                     pass
 
-            wp = _wrap_for_svg(combined)
-
-            tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
-            tmp.close()
-            exporters.export(
-                wp, tmp.name,
-                exportType=exporters.ExportTypes.SVG,
-                opt={
-                    "width": width,
-                    "height": height,
-                    "projectionDir": (1, -1, 0.5),
-                    "showAxes": False,
-                },
-            )
-            with open(tmp.name) as f:
-                svg_content = f.read()
-            Path(tmp.name).unlink(missing_ok=True)
+            svg_content = _export_svg_string(combined, projection="isometric")
 
             svg_path = OUTPUT_DIR / "scene_preview.svg"
             svg_path.write_text(svg_content)
@@ -273,8 +256,8 @@ def register(mcp: FastMCP) -> None:
             shape = require_object(name)
             mesh = _shape_to_trimesh(shape, tolerance=tolerance)
 
-            bb = shape.BoundingBox()
-            dims = f"{bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+            bb = shape.bounding_box()
+            dims = f"{bb.size.X:.1f} x {bb.size.Y:.1f} x {bb.size.Z:.1f} mm"
 
             if view == "multi":
                 png_path = OUTPUT_DIR / f"{name}_render_multi.png"

@@ -1,41 +1,54 @@
 """Section and exploded view tools for inspecting geometry."""
 
-import json
 import tempfile
 from typing import Optional
 from pathlib import Path
 
-import cadquery as cq
-from cadquery import exporters
+from build123d import Vector, Solid, Compound, ExportSVG
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+from OCP.HLRAlgo import HLRAlgo_Projector
+from OCP.gp import gp_Ax2, gp_Pnt, gp_Dir
 from mcp.server.fastmcp import FastMCP
 from caid_mcp.core import scene, require_object, store_object, assemblies, OUTPUT_DIR
 
 
 def _render_svg(shape, name_prefix, projection="isometric", width=600, height=400):
-    """Render a shape to SVG, save to output dir, return SVG text."""
+    """Render a shape to SVG via HLR projection, save to output dir, return SVG text."""
     proj_map = {
         "isometric": (1, -1, 0.5),
         "front": (0, -1, 0),
         "top": (0, 0, -1),
         "right": (-1, 0, 0),
     }
-    proj_dir = proj_map.get(projection, proj_map["isometric"])
-    wp = cq.Workplane("XY").add(shape)
+    dx, dy, dz = proj_map.get(projection, proj_map["isometric"])
+
+    # HLR (hidden line removal) projection
+    hlr = HLRBRep_Algo()
+    hlr.Add(shape.wrapped)
+    ax = gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(dx, dy, dz))
+    projector = HLRAlgo_Projector(ax)
+    hlr.Projector(projector)
+    hlr.Update()
+    hlr.Hide()
+
+    hlr_shapes = HLRBRep_HLRToShape(hlr)
+    visible = hlr_shapes.VCompound()
+
+    if visible.IsNull():
+        return "<svg/>", OUTPUT_DIR / f"{name_prefix}.svg"
+
+    visible_compound = Compound(visible)
+
+    # Export to SVG
+    svg_exporter = ExportSVG()
+    svg_exporter.add_layer("visible")
+    svg_exporter.add_shape(visible_compound, layer="visible")
 
     tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
     tmp.close()
-    exporters.export(
-        wp, tmp.name,
-        exportType=exporters.ExportTypes.SVG,
-        opt={
-            "width": width,
-            "height": height,
-            "projectionDir": proj_dir,
-            "showAxes": False,
-            "showHidden": False,
-        },
-    )
+    svg_exporter.write(tmp.name)
+
     with open(tmp.name) as f:
         svg = f.read()
     Path(tmp.name).unlink(missing_ok=True)
@@ -85,40 +98,39 @@ def register(mcp: FastMCP) -> None:
             if normal is None:
                 return f"FAIL Invalid axis '{axis}'. Use X, Y, or Z."
 
-            # Build a large cutting box on the positive side of the plane
+            # Build a large cutting box on the positive side of the plane.
+            # make_box starts at origin, so shift by -big/2 to center, then
+            # translate to the desired cut position.
             big = 10000
             nx, ny, nz = normal
             origin = (nx * offset, ny * offset, nz * offset)
-            cutter = (
-                cq.Workplane("XY")
-                .box(big, big, big)
-                .translate(cq.Vector(
+            centered_box = Solid.make_box(big, big, big).translate(
+                Vector(-big / 2, -big / 2, -big / 2)
+            )
+            cutter = centered_box.translate(
+                Vector(
                     nx * big / 2 + origin[0],
                     ny * big / 2 + origin[1],
                     nz * big / 2 + origin[2],
-                ))
-            ).val()
+                )
+            )
 
             # Cut removes the positive side; flip if user wants to keep "above"
             if keep == "above":
-                cut_op = BRepAlgoAPI_Cut(shape.wrapped, cutter.wrapped)
-                # Actually we need the OTHER half — invert: cut the negative side
-                neg_cutter = (
-                    cq.Workplane("XY")
-                    .box(big, big, big)
-                    .translate(cq.Vector(
+                neg_cutter = centered_box.translate(
+                    Vector(
                         -nx * big / 2 + origin[0],
                         -ny * big / 2 + origin[1],
                         -nz * big / 2 + origin[2],
-                    ))
-                ).val()
+                    )
+                )
                 cut_op = BRepAlgoAPI_Cut(shape.wrapped, neg_cutter.wrapped)
             else:
                 cut_op = BRepAlgoAPI_Cut(shape.wrapped, cutter.wrapped)
 
-            section_shape = cq.Shape(cut_op.Shape())
-            vol_before = shape.Volume()
-            vol_after = section_shape.Volume()
+            section_shape = Solid(cut_op.Shape())
+            vol_before = shape.volume
+            vol_after = section_shape.volume
 
             svg, svg_path = _render_svg(
                 section_shape, f"{name}_section_{axis}{offset}", projection
@@ -127,8 +139,8 @@ def register(mcp: FastMCP) -> None:
             if save_result:
                 store_object(save_result, section_shape)
 
-            bb = shape.BoundingBox()
-            dims = f"{bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+            bb = shape.bounding_box()
+            dims = f"{bb.size.X:.1f} x {bb.size.Y:.1f} x {bb.size.Z:.1f} mm"
 
             result_msg = (
                 f"OK Section view of '{name}' ({dims})\n"
@@ -174,13 +186,13 @@ def register(mcp: FastMCP) -> None:
             # Compute assembly centroid from part centers
             centers = []
             for part in parts:
-                c = part.shape.Center()
-                centers.append(cq.Vector(c.x, c.y, c.z))
+                c = part.shape.center()
+                centers.append(Vector(c.X, c.Y, c.Z))
 
-            centroid = cq.Vector(
-                sum(c.x for c in centers) / len(centers),
-                sum(c.y for c in centers) / len(centers),
-                sum(c.z for c in centers) / len(centers),
+            centroid = Vector(
+                sum(c.X for c in centers) / len(centers),
+                sum(c.Y for c in centers) / len(centers),
+                sum(c.Z for c in centers) / len(centers),
             )
 
             # Move each part outward from centroid
@@ -189,20 +201,20 @@ def register(mcp: FastMCP) -> None:
             for part, center in zip(parts, centers):
                 offset = center - centroid
                 # Scale the offset (scale=1 means no extra movement)
-                move = cq.Vector(
-                    offset.x * (scale - 1),
-                    offset.y * (scale - 1),
-                    offset.z * (scale - 1),
+                move = Vector(
+                    offset.X * (scale - 1),
+                    offset.Y * (scale - 1),
+                    offset.Z * (scale - 1),
                 )
-                moved = part.shape.move(cq.Location(move))
+                moved = part.shape.translate(move)
                 exploded_shapes.append(moved)
                 part_info.append({
                     "name": part.name,
-                    "offset": [round(move.x, 2), round(move.y, 2), round(move.z, 2)],
+                    "offset": [round(move.X, 2), round(move.Y, 2), round(move.Z, 2)],
                 })
 
             # Combine all exploded shapes into a compound for rendering
-            compound = cq.Compound.makeCompound(exploded_shapes)
+            compound = Compound(exploded_shapes)
 
             svg, svg_path = _render_svg(
                 compound, f"{assembly_name}_exploded", projection

@@ -1,9 +1,19 @@
 """Sweep and loft tools — create solids by sweeping or lofting profiles."""
 
 import json
-import cadquery as cq
+from build123d import (
+    BuildPart, BuildSketch, BuildLine, Polyline, Circle, Rectangle,
+    Edge, Wire, Plane, Vector, Transition, make_face,
+    sweep as b123d_sweep, loft as b123d_loft,
+)
 from mcp.server.fastmcp import FastMCP
 from caid_mcp.core import store_object
+
+_TRANSITION_MAP = {
+    "round": Transition.ROUND,
+    "transformed": Transition.TRANSFORMED,
+    "right": Transition.RIGHT,
+}
 
 
 def register(mcp: FastMCP) -> None:
@@ -43,21 +53,23 @@ def register(mcp: FastMCP) -> None:
             if any(len(p) != 3 for p in path):
                 return "FAIL Path points must be [x, y, z] (3D coordinates)"
 
-            trans = transition.lower() if transition.lower() in {"round", "transformed", "right"} else "round"
+            trans = _TRANSITION_MAP.get(transition.lower(), Transition.ROUND)
 
             # Build path wire as spline through 3D points
-            path_wire = cq.Workplane("XY").spline(
-                [cq.Vector(*p) for p in path]
-            )
+            path_edge = Edge.make_spline(path)
+            path_wire = Wire([path_edge])
 
-            # Build profile polygon on XY plane at origin
-            profile_wp = cq.Workplane("XY").polyline(profile).close()
+            # Build profile polygon on XY plane and sweep along path
+            with BuildPart() as part:
+                with BuildSketch():
+                    with BuildLine():
+                        Polyline(*profile, profile[0])
+                    make_face()
+                b123d_sweep(path=path_wire, transition=trans, multisection=multisection)
 
-            result = profile_wp.sweep(path_wire, transition=trans, multisection=multisection)
-            shape = result.val()
-            vol = shape.Volume()
+            shape = part.part.solids()[0]
             store_object(name, shape)
-            return f"OK Swept profile ({len(profile)} pts) along path ({len(path)} pts) -> '{name}' | volume={vol:.1f}mm3"
+            return f"OK Swept profile ({len(profile)} pts) along path ({len(path)} pts) -> '{name}' | volume={shape.volume:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"
 
@@ -82,15 +94,17 @@ def register(mcp: FastMCP) -> None:
             if len(path) < 2:
                 return "FAIL Path must have at least 2 points"
 
-            path_wire = cq.Workplane("XY").spline(
-                [cq.Vector(*p) for p in path]
-            )
+            path_edge = Edge.make_spline(path)
+            path_wire = Wire([path_edge])
 
-            result = cq.Workplane("XY").circle(radius).sweep(path_wire)
-            shape = result.val()
-            vol = shape.Volume()
+            with BuildPart() as part:
+                with BuildSketch():
+                    Circle(radius)
+                b123d_sweep(path=path_wire)
+
+            shape = part.part.solids()[0]
             store_object(name, shape)
-            return f"OK Swept circle (r={radius}) along path ({len(path)} pts) -> '{name}' | volume={vol:.1f}mm3"
+            return f"OK Swept circle (r={radius}) along path ({len(path)} pts) -> '{name}' | volume={shape.volume:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"
 
@@ -124,32 +138,22 @@ def register(mcp: FastMCP) -> None:
             # Sort by Z height
             data.sort(key=lambda p: p["z"])
 
-            # Build the first profile
-            pts = [tuple(p) for p in data[0]["points"]]
-            if len(pts) < 3:
-                return "FAIL Each profile must have at least 3 points"
-            wp = (
-                cq.Workplane("XY")
-                .workplane(offset=data[0]["z"])
-                .polyline(pts)
-                .close()
-            )
+            with BuildPart() as part:
+                for prof in data:
+                    pts = [tuple(p) for p in prof["points"]]
+                    if len(pts) < 3:
+                        return f"FAIL Profile at z={prof['z']} must have at least 3 points"
+                    with BuildSketch(Plane.XY.offset(prof["z"])):
+                        with BuildLine():
+                            Polyline(*pts, pts[0])
+                        make_face()
+                b123d_loft(ruled=ruled)
 
-            # Add subsequent profiles using enumerate for correct Z offsets
-            for i, prof in enumerate(data[1:], start=1):
-                pts = [tuple(p) for p in prof["points"]]
-                if len(pts) < 3:
-                    return f"FAIL Profile at z={prof['z']} must have at least 3 points"
-                z_delta = prof["z"] - data[i - 1]["z"]
-                wp = wp.workplane(offset=z_delta).polyline(pts).close()
-
-            result = wp.loft(ruled=ruled)
-            shape = result.val()
-            vol = shape.Volume()
+            shape = part.part.solids()[0]
             store_object(name, shape)
             return (
                 f"OK Lofted {len(data)} profiles (z={data[0]['z']} to z={data[-1]['z']}) "
-                f"-> '{name}' | volume={vol:.1f}mm3"
+                f"-> '{name}' | volume={shape.volume:.1f}mm3"
             )
         except Exception as e:
             return f"FAIL Error: {e}"
@@ -173,25 +177,21 @@ def register(mcp: FastMCP) -> None:
             circle_on_top: If True, circle is at the top. Default: circle at bottom.
         """
         try:
-            if circle_on_top:
-                wp = (
-                    cq.Workplane("XY")
-                    .rect(length, width)
-                    .workplane(offset=height)
-                    .circle(radius)
-                )
-            else:
-                wp = (
-                    cq.Workplane("XY")
-                    .circle(radius)
-                    .workplane(offset=height)
-                    .rect(length, width)
-                )
+            with BuildPart() as part:
+                if circle_on_top:
+                    with BuildSketch(Plane.XY.offset(0)):
+                        Rectangle(length, width)
+                    with BuildSketch(Plane.XY.offset(height)):
+                        Circle(radius)
+                else:
+                    with BuildSketch(Plane.XY.offset(0)):
+                        Circle(radius)
+                    with BuildSketch(Plane.XY.offset(height)):
+                        Rectangle(length, width)
+                b123d_loft()
 
-            result = wp.loft()
-            shape = result.val()
-            vol = shape.Volume()
+            shape = part.part.solids()[0]
             store_object(name, shape)
-            return f"OK Lofted circle-to-rect '{name}': r={radius}, {length}x{width}, h={height} | volume={vol:.1f}mm3"
+            return f"OK Lofted circle-to-rect '{name}': r={radius}, {length}x{width}, h={height} | volume={shape.volume:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"

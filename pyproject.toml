@@ -1,7 +1,7 @@
 [project]
 name = "caid-mcp"
 version = "0.3.2"
-description = "MCP server giving AI agents validated 3D modeling via CAiD + CadQuery"
+description = "MCP server giving AI agents validated 3D modeling via CAiD + build123d"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -11,7 +11,7 @@ authors = [
 ]
 dependencies = [
     "mcp>=1.2.0",
-    "cadquery>=2.4.0",
+    "build123d>=0.10.0",
     # caid must be installed separately — see README for instructions
 ]
 

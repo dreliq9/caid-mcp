@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
-import cadquery as cq
+from build123d import Vector, Solid, Compound
 import caid
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
@@ -62,19 +62,17 @@ def require_object(name: str) -> Any:
 
 
 def store_object(name: str, obj: Any) -> None:
-    """Store a shape in the scene. Auto-extracts from ForgeResult or Workplane."""
+    """Store a shape in the scene. Auto-extracts from ForgeResult."""
     if isinstance(obj, ForgeResult):
         obj = obj.unwrap()
-    elif isinstance(obj, cq.Workplane):
-        obj = obj.val()
     scene[name] = obj
 
 
 def object_summary(name: str, obj: Any) -> str:
     """Return a one-line summary of a shape."""
     try:
-        bb = obj.BoundingBox()
-        return f"'{name}': {bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+        bb = obj.bounding_box()
+        return f"'{name}': {bb.size.X:.1f} x {bb.size.Y:.1f} x {bb.size.Z:.1f} mm"
     except Exception:
         return f"'{name}': (dimensions unavailable)"
 
@@ -117,7 +115,7 @@ def _shape_to_brep_file(shape, path: Path) -> None:
 
 
 def _brep_file_to_shape(path: Path):
-    """Read a BREP file back into a CadQuery shape."""
+    """Read a BREP file back into a build123d shape."""
     fr = caid.from_brep(path)
     if fr.ok:
         return fr.shape
@@ -128,13 +126,13 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
     """Run a boolean operation in a subprocess to survive OCCT segfaults.
 
     Args:
-        shape_a: First operand (CadQuery Shape).
-        shape_b: Second operand (CadQuery Shape).
+        shape_a: First operand (build123d Shape).
+        shape_b: Second operand (build123d Shape).
         operation: One of "union", "cut", "intersect".
         timeout: Max seconds before killing the subprocess.
 
     Returns:
-        ForgeResult-like dict with keys: ok, shape (or None), msg, diagnostics.
+        ForgeResult with the boolean result.
     """
     tmp_dir = Path(tempfile.mkdtemp(prefix="caid_bool_"))
     brep_a = tmp_dir / "a.brep"

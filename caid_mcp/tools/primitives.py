@@ -1,8 +1,7 @@
 """Primitive 3D shape creation tools — backed by caid."""
 
 import json
-import cadquery as cq
-from cadquery import Vector
+from build123d import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid_mcp.core import store_object, format_result
@@ -128,10 +127,15 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             pts = [tuple(p) for p in json.loads(points)]
-            result = cq.Workplane("XY").polyline(pts).close().extrude(height)
-            shape = result.val()
+            from build123d import BuildPart, BuildSketch, Polyline, make_face, extrude as b123d_extrude
+            with BuildPart() as part:
+                with BuildSketch():
+                    Polyline(*pts, pts[0])
+                    make_face()
+                b123d_extrude(amount=height)
+            shape = part.part.solids()[0]
             store_object(name, shape)
-            return f"OK Created extruded polygon '{name}': {len(pts)} vertices, h={height} mm | volume={shape.Volume():.1f}mm3"
+            return f"OK Created extruded polygon '{name}': {len(pts)} vertices, h={height} mm | volume={shape.volume:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"
 
@@ -147,11 +151,14 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             pts = [tuple(p) for p in json.loads(points)]
-            result = cq.Workplane("XZ").polyline(pts).close().revolve(
-                angle, (0, 0, 0), (0, 1, 0)
-            )
-            shape = result.val()
+            from build123d import BuildPart, BuildSketch, Polyline, make_face, revolve as b123d_revolve, Axis, Plane
+            with BuildPart() as part:
+                with BuildSketch(Plane.XZ):
+                    Polyline(*pts, pts[0])
+                    make_face()
+                b123d_revolve(axis=Axis.Y, revolution_arc=angle)
+            shape = part.part.solids()[0]
             store_object(name, shape)
-            return f"OK Created revolved solid '{name}': {len(pts)} profile points, {angle} deg | volume={shape.Volume():.1f}mm3"
+            return f"OK Created revolved solid '{name}': {len(pts)} profile points, {angle} deg | volume={shape.volume:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"
