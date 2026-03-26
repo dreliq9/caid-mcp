@@ -38,7 +38,7 @@ mcp = FastMCP("CAiD 3D Modeler")
 from caid_mcp.tools import (
     primitives, modify, transforms, booleans,
     scene, export, advanced, heal, io, assembly, compound, query, view,
-    sweep, fasteners, history,
+    sweep, fasteners, history, parts_warehouse, parts_library,
 )
 
 primitives.register(mcp)
@@ -57,8 +57,10 @@ view.register(mcp)
 sweep.register(mcp)
 fasteners.register(mcp)
 history.register(mcp)
+parts_warehouse.register(mcp)
+parts_library.register(mcp)
 
-log.info("CAiD MCP Server v0.4.0 ready — 72 tools — output dir: %s", OUTPUT_DIR)
+log.info("CAiD MCP Server v0.4.1 ready — 79 tools — output dir: %s", OUTPUT_DIR)
 
 # ---------------------------------------------------------------------------
 # Entry point
