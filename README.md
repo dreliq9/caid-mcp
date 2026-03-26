@@ -1,5 +1,7 @@
 # CAiD MCP Server
 
+<!-- mcp-name: io.github.dreliq9/caid-mcp -->
+
 An MCP server that gives AI agents **validated 3D CAD modeling** via [CAiD](https://github.com/dreliq9/CAiD) and [CadQuery](https://cadquery.readthedocs.io/). No GUI needed — the modeling engine IS the server.
 
 Every geometry operation is validated through CAiD's ForgeResult system, which tracks volume, surface area, and diagnostics. If a boolean silently fails (common with OCCT), the validation layer catches it and tells you why.

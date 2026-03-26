@@ -1,6 +1,6 @@
 [project]
 name = "caid-mcp"
-version = "0.3.1"
+version = "0.3.2"
 description = "MCP server giving AI agents validated 3D modeling via CAiD + CadQuery"
 readme = "README.md"
 license = {text = "MIT"}

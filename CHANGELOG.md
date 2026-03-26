@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.2 — 2026-03-26
+
+- Added MCP Registry verification metadata to README
+- Added examples, CONTRIBUTING.md, GitHub Actions CI
+- Updated GitHub URLs, license year, attribution
+
 ## v0.3.1 — 2026-03-26
 
 **New tool modules:**

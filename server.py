@@ -1,5 +1,5 @@
 """
-CAiD MCP Server v0.3.1
+CAiD MCP Server v0.3.2
 =====================
 An MCP server that gives AI agents validated 3D modeling
 via CAiD (CadQuery wrapper with ForgeResult validation).
@@ -54,7 +54,7 @@ compound.register(mcp)
 query.register(mcp)
 view.register(mcp)
 
-log.info("CAiD MCP Server v0.3.1 ready — 54 tools — output dir: %s", OUTPUT_DIR)
+log.info("CAiD MCP Server v0.3.2 ready — 54 tools — output dir: %s", OUTPUT_DIR)
 
 # ---------------------------------------------------------------------------
 # Entry point
