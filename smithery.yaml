@@ -1,0 +1,14 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      CAID_OUTPUT_DIR:
+        type: string
+        description: "Directory for exported STL/STEP/BREP files (default: ~/cadquery-output/)"
+  commandFunction: |
+    (config) => ({
+      command: "conda",
+      args: ["run", "-n", "cadforge", "python", "server.py"],
+      env: config.CAID_OUTPUT_DIR ? { CAID_OUTPUT_DIR: config.CAID_OUTPUT_DIR } : {}
+    })

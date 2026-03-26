@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.dreliq9/caid-mcp",
+  "title": "CAiD MCP Server",
+  "description": "MCP server giving AI agents validated 3D CAD modeling via CAiD + CadQuery. 54 tools across 13 categories with geometry validation, index-based edge/face selection, and healing.",
+  "repository": {
+    "url": "https://github.com/dreliq9/caid-mcp",
+    "source": "github"
+  },
+  "version": "0.3.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "caid-mcp",
+      "version": "0.3.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Directory for exported STL/STEP/BREP files (default: ~/cadquery-output/)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "CAID_OUTPUT_DIR"
+        }
+      ]
+    }
+  ]
+}
