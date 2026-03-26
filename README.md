@@ -54,6 +54,10 @@ caid-mcp/
 │       ├── assembly.py          # Multi-part assemblies (5 tools)
 │       ├── compound.py          # Belt/pulley systems (3 tools)
 │       └── advanced.py          # Scripting, patterns, tool router (3 tools)
+├── examples/
+│   ├── quickstart.py               # Install verification script
+│   ├── GALLERY.md                   # Example gallery with prompts
+│   └── images/                      # Rendered example images
 ├── tests/
 │   └── test_cadquery_mcp.py
 ├── pyproject.toml
@@ -197,12 +201,27 @@ Or in the MCP config:
 
 ---
 
-## Example Prompts
+## Examples
 
-- *"Create a 50mm cube with 3mm filleted edges, preview it, then export as STL"*
-- *"Make a phone stand: rectangular base with an angled slot cut into it"*
-- *"Design a mounting bracket: L-shape with two holes, show me front and isometric views"*
-- *"List the edges on this part, then fillet just the top edges by index"*
+Real parts built through CAiD MCP tools. Each example highlights validated geometry, query-before-modify, and section views — things other CAD-for-AI tools can't do. See the [full gallery](examples/GALLERY.md) for tool sequences and workflow breakdowns.
+
+<table>
+<tr>
+<td align="center"><img src="examples/images/pi_case.png" width="300"><br><b>Raspberry Pi Case</b><br>Shell, port cutouts, section view verification</td>
+<td align="center"><img src="examples/images/headphone_stand.png" width="300"><br><b>Headphone Stand</b><br>Primitives, booleans, overlap validation</td>
+</tr>
+<tr>
+<td align="center"><img src="examples/images/hex_bolt_nut.png" width="300"><br><b>Hex Bolt & Nut</b><br>Extruded polygon, chamfers, multi-part scene</td>
+<td align="center"><img src="examples/images/cable_clip.png" width="300"><br><b>Cable Clip</b><br>Boolean subtract, snap-fit slot, 30-second build</td>
+</tr>
+</table>
+
+### Sample Prompts
+
+- *"Design a Pi case with port cutouts, then section it to verify wall thickness"*
+- *"Make a headphone stand — measure the total height when you're done"*
+- *"Model an M10 bolt and nut, chamfer the edges, place them side by side"*
+- *"List the edges on this part, then fillet just the inner joint by index"*
 - *"Section view through the middle to check the internal hole dimensions"*
 
 ---

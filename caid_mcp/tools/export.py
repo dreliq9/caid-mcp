@@ -1,4 +1,4 @@
-"""Export tools (STL, STEP) and visual preview (SVG rendering)."""
+"""Export tools (STL, STEP), visual preview (SVG), and shaded PNG rendering."""
 
 import tempfile
 from typing import Optional
@@ -8,12 +8,120 @@ import cadquery as cq
 from cadquery import exporters
 from mcp.server.fastmcp import FastMCP
 import caid
+import numpy as np
+import trimesh
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
 from caid_mcp.core import scene, require_object, OUTPUT_DIR, log
 
 
 def _wrap_for_svg(shape) -> cq.Workplane:
     """Wrap a raw shape in a Workplane for CQ's SVG exporter."""
     return cq.Workplane("XY").add(shape)
+
+
+def _shape_to_trimesh(shape, tolerance: float = 0.1) -> trimesh.Trimesh:
+    """Tessellate an OCP shape to a trimesh mesh via temp STL."""
+    wp = cq.Workplane("XY").add(shape)
+    tmp = tempfile.NamedTemporaryFile(suffix=".stl", delete=False)
+    tmp.close()
+    try:
+        exporters.export(
+            wp, tmp.name,
+            exportType=exporters.ExportTypes.STL,
+            tolerance=tolerance,
+        )
+        mesh = trimesh.load(tmp.name)
+    finally:
+        Path(tmp.name).unlink(missing_ok=True)
+    return mesh
+
+
+_VIEW_ANGLES = {
+    "iso":    (25.0, 135.0),
+    "front":  (0.0, 0.0),
+    "back":   (0.0, 180.0),
+    "top":    (90.0, 0.0),
+    "bottom": (-90.0, 0.0),
+    "right":  (0.0, 90.0),
+    "left":   (0.0, -90.0),
+}
+
+
+def _setup_ax(ax, verts, elev, azim):
+    """Auto-scale and orient a 3D axis to fit geometry."""
+    center = verts.mean(axis=0)
+    max_range = verts.ptp(axis=0).max() / 2 * 1.15
+    ax.set_xlim(center[0] - max_range, center[0] + max_range)
+    ax.set_ylim(center[1] - max_range, center[1] + max_range)
+    ax.set_zlim(center[2] - max_range, center[2] + max_range)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.view_init(elev=elev, azim=azim)
+
+
+def _add_shaded_mesh(ax, mesh, color):
+    """Add a shaded trimesh to a matplotlib 3D axis."""
+    from matplotlib.colors import to_rgb
+    verts = mesh.vertices
+    polygons = verts[mesh.faces]
+    normals = mesh.face_normals
+    light_dir = np.array([1.0, -1.0, 1.5])
+    light_dir = light_dir / np.linalg.norm(light_dir)
+    intensity = np.clip(normals @ light_dir, 0.15, 1.0)
+    base_rgb = np.array(to_rgb(color))
+    face_colors = np.outer(intensity, base_rgb)
+    face_colors = np.clip(face_colors, 0, 1)
+    face_colors = np.column_stack([face_colors, np.ones(len(face_colors))])
+    collection = Poly3DCollection(polygons, linewidth=0.2, edgecolor="#222222")
+    collection.set_facecolor(face_colors)
+    ax.add_collection3d(collection)
+
+
+def _render_multiview(
+    mesh: trimesh.Trimesh,
+    out_path: Path,
+    width: int = 800,
+    height: int = 600,
+    color: str = "#4a90d9",
+) -> None:
+    """Render a 2x2 grid: iso, front, top, right."""
+    fig = plt.figure(figsize=(width / 100, height / 100))
+    views = [("Iso", "iso"), ("Front", "front"), ("Top", "top"), ("Right", "right")]
+    verts = mesh.vertices
+
+    for i, (label, view_name) in enumerate(views):
+        ax = fig.add_subplot(2, 2, i + 1, projection="3d")
+        _add_shaded_mesh(ax, mesh, color)
+        elev, azim = _VIEW_ANGLES[view_name]
+        _setup_ax(ax, verts, elev, azim)
+        ax.set_title(label, fontsize=10)
+
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def _render_mesh_to_png(
+    mesh: trimesh.Trimesh,
+    out_path: Path,
+    width: int = 800,
+    height: int = 600,
+    elev: float = 25.0,
+    azim: float = 135.0,
+    color: str = "#4a90d9",
+) -> None:
+    """Render a trimesh to a shaded PNG using matplotlib."""
+    fig = plt.figure(figsize=(width / 100, height / 100))
+    ax = fig.add_subplot(111, projection="3d")
+    _add_shaded_mesh(ax, mesh, color)
+    _setup_ax(ax, mesh.vertices, elev, azim)
+    fig.savefig(str(out_path), dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
 def register(mcp: FastMCP) -> None:
@@ -134,6 +242,125 @@ def register(mcp: FastMCP) -> None:
             )
         except Exception as e:
             return f"FAIL Error rendering scene preview: {e}"
+
+    # ========================== SHADED PNG RENDER ==============================
+
+    @mcp.tool()
+    def render_object(
+        name: str,
+        view: str = "iso",
+        width: int = 800,
+        height: int = 600,
+        color: str = "#4a90d9",
+        tolerance: float = 0.1,
+    ) -> str:
+        """Render a shaded PNG image of an object — much easier to visually verify
+        than SVG wireframes, especially for complex geometry.
+
+        The image is saved to the output directory. Use the returned file path
+        with the Read tool to view it.
+
+        Args:
+            name: Name of the object to render.
+            view: Camera preset — "iso", "front", "top", "right", "back", "left",
+                  "bottom", or "multi" (2x2 grid of iso+front+top+right).
+            width: Image width in pixels (default 800).
+            height: Image height in pixels (default 600).
+            color: Face color as hex string (default "#4a90d9").
+            tolerance: Mesh tolerance in mm — lower = smoother (default 0.1).
+        """
+        try:
+            shape = require_object(name)
+            mesh = _shape_to_trimesh(shape, tolerance=tolerance)
+
+            bb = shape.BoundingBox()
+            dims = f"{bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+
+            if view == "multi":
+                png_path = OUTPUT_DIR / f"{name}_render_multi.png"
+                _render_multiview(mesh, png_path, width=width, height=height, color=color)
+            else:
+                png_path = OUTPUT_DIR / f"{name}_render_{view}.png"
+                elev, azim = _VIEW_ANGLES.get(view, _VIEW_ANGLES["iso"])
+                _render_mesh_to_png(
+                    mesh, png_path,
+                    width=width, height=height,
+                    elev=elev, azim=azim, color=color,
+                )
+
+            size_kb = png_path.stat().st_size / 1024
+            return (
+                f"OK Rendered '{name}' ({dims}, {view} view) -> {png_path} ({size_kb:.1f} KB)\n"
+                f"Use Read tool on {png_path} to view the image."
+            )
+        except Exception as e:
+            return f"FAIL Error rendering: {e}"
+
+    @mcp.tool()
+    def render_scene(
+        view: str = "iso",
+        width: int = 800,
+        height: int = 600,
+        tolerance: float = 0.1,
+    ) -> str:
+        """Render a shaded PNG of ALL objects in the scene. Each object gets a
+        different color for easy identification.
+
+        Args:
+            view: Camera preset — "iso", "front", "top", "right", "back", "left",
+                  "bottom", or "multi" (2x2 grid).
+            width: Image width in pixels.
+            height: Image height in pixels.
+            tolerance: Mesh tolerance in mm.
+        """
+        if not scene:
+            return "Scene is empty — nothing to render."
+        try:
+            palette = [
+                "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12",
+                "#9b59b6", "#1abc9c", "#e67e22", "#3498db",
+            ]
+            meshes_and_colors = []
+            for i, (obj_name, shape) in enumerate(scene.items()):
+                mesh = _shape_to_trimesh(shape, tolerance=tolerance)
+                meshes_and_colors.append((mesh, palette[i % len(palette)], obj_name))
+
+            if view == "multi":
+                fig = plt.figure(figsize=(width / 100, height / 100))
+                views = [("Iso", "iso"), ("Front", "front"), ("Top", "top"), ("Right", "right")]
+                all_verts = np.vstack([m.vertices for m, _, _ in meshes_and_colors])
+                for i, (label, vn) in enumerate(views):
+                    ax = fig.add_subplot(2, 2, i + 1, projection="3d")
+                    for mesh, hex_color, _ in meshes_and_colors:
+                        _add_shaded_mesh(ax, mesh, hex_color)
+                    elev, azim = _VIEW_ANGLES[vn]
+                    _setup_ax(ax, all_verts, elev, azim)
+                    ax.set_title(label, fontsize=10)
+                fig.tight_layout()
+                png_path = OUTPUT_DIR / "scene_render_multi.png"
+            else:
+                fig = plt.figure(figsize=(width / 100, height / 100))
+                ax = fig.add_subplot(111, projection="3d")
+                all_verts_list = []
+                for mesh, hex_color, _ in meshes_and_colors:
+                    _add_shaded_mesh(ax, mesh, hex_color)
+                    all_verts_list.append(mesh.vertices)
+                combined = np.vstack(all_verts_list)
+                elev, azim = _VIEW_ANGLES.get(view, _VIEW_ANGLES["iso"])
+                _setup_ax(ax, combined, elev, azim)
+                png_path = OUTPUT_DIR / f"scene_render_{view}.png"
+
+            fig.savefig(str(png_path), dpi=150, bbox_inches="tight", facecolor="white")
+            plt.close(fig)
+
+            size_kb = png_path.stat().st_size / 1024
+            obj_list = ", ".join(n for _, _, n in meshes_and_colors)
+            return (
+                f"OK Scene render ({len(scene)} objects: {obj_list}, {view} view) -> {png_path} ({size_kb:.1f} KB)\n"
+                f"Use Read tool on {png_path} to view the image."
+            )
+        except Exception as e:
+            return f"FAIL Error rendering scene: {e}"
 
     # ========================== STL EXPORT ====================================
 

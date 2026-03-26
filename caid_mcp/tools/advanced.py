@@ -1,14 +1,82 @@
 """Advanced tools: script execution, patterns, and the tool router."""
 
 import json
+import subprocess
+import sys
+import textwrap
 import traceback
+from pathlib import Path
 from typing import Optional
 
 import cadquery as cq
 from cadquery import Vector, exporters
 from mcp.server.fastmcp import FastMCP
 import caid
-from caid_mcp.core import scene, require_object, store_object, OUTPUT_DIR
+from caid_mcp.core import scene, require_object, store_object, OUTPUT_DIR, log
+
+
+def _run_script_in_subprocess(
+    script: str,
+    result_brep_path: Optional[Path] = None,
+    timeout: int = 120,
+) -> dict:
+    """Run a CadQuery script in an isolated subprocess.
+
+    Returns dict with keys: ok (bool), stdout (str), stderr (str), returncode (int).
+    If result_brep_path is set, the subprocess wrapper will export the 'result'
+    variable as a BREP file at that path.
+    """
+    # Build a wrapper script that executes user code in a fresh Python process
+    export_snippet = ""
+    if result_brep_path:
+        export_snippet = (
+            'if "result" in dir() or "result" in globals():\n'
+            '    import cadquery as _cq\n'
+            '    from caid.result import ForgeResult as _FR\n'
+            '    _obj = result\n'
+            '    if isinstance(_obj, _FR):\n'
+            '        _obj = _obj.unwrap()\n'
+            '    elif isinstance(_obj, _cq.Workplane):\n'
+            '        _obj = _obj.val()\n'
+            '    from OCP.BRepTools import BRepTools\n'
+            f'    BRepTools.Write_s(_obj.wrapped, "{result_brep_path}")\n'
+            '    print("__RESULT_EXPORTED__")\n'
+        )
+
+    wrapper = (
+        "import cadquery as cq\n"
+        "from cadquery import Vector, exporters\n"
+        "import caid\n"
+        "from pathlib import Path\n"
+        f"OUTPUT_DIR = Path(\"{OUTPUT_DIR}\")\n"
+        "scene = {}\n"
+        "\n"
+        f"{script}\n"
+        "\n"
+        f"{export_snippet}"
+    )
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", wrapper],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(OUTPUT_DIR),
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "returncode": proc.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": f"Script timed out after {timeout}s",
+            "returncode": -1,
+        }
 
 
 def register(mcp: FastMCP) -> None:
@@ -16,35 +84,74 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def run_cadquery_script(script: str, result_name: Optional[str] = None) -> str:
-        """Execute arbitrary CadQuery/CAiD Python code for advanced operations.
+        """Execute CadQuery/CAiD Python code in an isolated subprocess.
 
-        The script has access to:
+        Runs in a separate process so that OCCT segfaults cannot crash the
+        MCP server. The subprocess has access to:
         - cq: the cadquery module
         - caid: the CAiD module (validated geometry operations)
         - Vector: cadquery.Vector for convenience
-        - scene: the scene dict (shapes, not Workplanes)
         - OUTPUT_DIR: Path to output directory
         - exporters: CadQuery export module
 
-        If the script sets a variable called 'result', it will be stored under result_name.
-        The result can be a raw Shape, a cq.Workplane, or a caid.ForgeResult.
+        Note: the subprocess does NOT have access to the live scene dict.
+        To use existing scene objects, import them from STEP/BREP files.
+
+        If the script sets a variable called 'result', it will be stored under
+        result_name by exporting as BREP and re-importing in the server process.
 
         Args:
             script: Python code to execute.
             result_name: If provided, store the 'result' variable under this name.
         """
-        try:
-            exec_globals = {
-                "cq": cq, "caid": caid, "Vector": Vector,
-                "scene": scene, "OUTPUT_DIR": OUTPUT_DIR, "exporters": exporters,
-            }
-            exec(script, exec_globals)
-            if result_name and "result" in exec_globals:
-                store_object(result_name, exec_globals["result"])
-                return f"OK Script executed. Result stored as '{result_name}'."
-            return "OK Script executed successfully."
-        except Exception:
-            return f"FAIL Script error:\n{traceback.format_exc()}"
+        brep_path = None
+        if result_name:
+            brep_path = OUTPUT_DIR / f"_subprocess_result_{result_name}.brep"
+
+        run = _run_script_in_subprocess(script, result_brep_path=brep_path)
+
+        if run["returncode"] == 139 or run["returncode"] == -11:
+            log.warning("CadQuery script segfaulted (OCCT crash) — server is safe")
+            return (
+                "FAIL Script crashed with a segfault (OCCT kernel error). "
+                "The MCP server is still running. This typically happens with "
+                "complex boolean operations on swept/helical geometry. "
+                "Try simplifying the operation or using a different approach."
+            )
+
+        if not run["ok"]:
+            stderr = run["stderr"].strip()
+            if run["returncode"] == -1:
+                return f"FAIL {stderr}"
+            return f"FAIL Script error (exit {run['returncode']}):\n{stderr}"
+
+        # If we got a result, import the BREP back into the scene
+        if result_name and brep_path and brep_path.exists():
+            if "__RESULT_EXPORTED__" in run["stdout"]:
+                try:
+                    fr = caid.from_brep(brep_path)
+                    if fr.ok:
+                        store_object(result_name, fr.shape)
+                        brep_path.unlink(missing_ok=True)
+                        stdout_clean = run["stdout"].replace("__RESULT_EXPORTED__", "").strip()
+                        msg = f"OK Script executed. Result stored as '{result_name}'."
+                        if stdout_clean:
+                            msg += f"\nOutput: {stdout_clean}"
+                        return msg
+                    else:
+                        brep_path.unlink(missing_ok=True)
+                        return f"FAIL Script ran but result BREP failed to reimport: {fr.diagnostics}"
+                except Exception as e:
+                    brep_path.unlink(missing_ok=True)
+                    return f"FAIL Script ran but result BREP reimport error: {e}"
+            else:
+                brep_path.unlink(missing_ok=True)
+
+        stdout_clean = run["stdout"].strip()
+        msg = "OK Script executed successfully."
+        if stdout_clean:
+            msg += f"\nOutput: {stdout_clean}"
+        return msg
 
     @mcp.tool()
     def create_linear_pattern(

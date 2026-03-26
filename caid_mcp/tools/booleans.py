@@ -1,9 +1,11 @@
-"""Boolean operation tools — backed by caid with volume validation."""
+"""Boolean operation tools — subprocess-isolated to survive OCCT segfaults."""
 
 import json
 from mcp.server.fastmcp import FastMCP
-import caid
-from caid_mcp.core import require_object, store_object, scene, format_result
+from caid_mcp.core import (
+    require_object, store_object, scene,
+    format_result, safe_boolean,
+)
 
 
 def register(mcp: FastMCP) -> None:
@@ -20,7 +22,9 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             a, b = require_object(name_a), require_object(name_b)
-            fr = caid.boolean_union(a, b)
+            fr = safe_boolean(a, b, "union")
+            if isinstance(fr, dict):
+                return fr["msg"]
             msg = format_result(fr, f"Union: '{name_a}' + '{name_b}' -> '{result_name}'")
             if fr.shape is not None:
                 store_object(result_name, fr.shape)
@@ -39,7 +43,9 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             a, b = require_object(name_a), require_object(name_b)
-            fr = caid.boolean_cut(a, b)
+            fr = safe_boolean(a, b, "cut")
+            if isinstance(fr, dict):
+                return fr["msg"]
             msg = format_result(fr, f"Cut: '{name_a}' - '{name_b}' -> '{result_name}'")
             if fr.shape is not None:
                 store_object(result_name, fr.shape)
@@ -58,7 +64,9 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             a, b = require_object(name_a), require_object(name_b)
-            fr = caid.boolean_intersect(a, b)
+            fr = safe_boolean(a, b, "intersect")
+            if isinstance(fr, dict):
+                return fr["msg"]
             msg = format_result(fr, f"Intersect: '{name_a}' ^ '{name_b}' -> '{result_name}'")
             if fr.shape is not None:
                 store_object(result_name, fr.shape)
@@ -81,7 +89,9 @@ def register(mcp: FastMCP) -> None:
             result_shape = require_object(name_list[0])
             warnings = []
             for n in name_list[1:]:
-                fr = caid.boolean_union(result_shape, require_object(n))
+                fr = safe_boolean(result_shape, require_object(n), "union")
+                if isinstance(fr, dict):
+                    return fr["msg"]
                 if fr.shape is not None:
                     result_shape = fr.shape
                 if not fr.valid:
