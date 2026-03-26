@@ -1,5 +1,5 @@
 """
-CAiD MCP Server v0.3.2
+CAiD MCP Server v0.4.0
 =====================
 An MCP server that gives AI agents validated 3D modeling
 via CAiD (CadQuery wrapper with ForgeResult validation).
@@ -38,6 +38,7 @@ mcp = FastMCP("CAiD 3D Modeler")
 from caid_mcp.tools import (
     primitives, modify, transforms, booleans,
     scene, export, advanced, heal, io, assembly, compound, query, view,
+    sweep, fasteners, history,
 )
 
 primitives.register(mcp)
@@ -53,8 +54,11 @@ assembly.register(mcp)
 compound.register(mcp)
 query.register(mcp)
 view.register(mcp)
+sweep.register(mcp)
+fasteners.register(mcp)
+history.register(mcp)
 
-log.info("CAiD MCP Server v0.3.2 ready — 54 tools — output dir: %s", OUTPUT_DIR)
+log.info("CAiD MCP Server v0.4.0 ready — 72 tools — output dir: %s", OUTPUT_DIR)
 
 # ---------------------------------------------------------------------------
 # Entry point

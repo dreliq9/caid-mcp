@@ -8,6 +8,49 @@ from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from caid_mcp.core import scene, require_object
 
 
+# ---------------------------------------------------------------------------
+# Material density library (g/cm³)
+# ---------------------------------------------------------------------------
+
+MATERIAL_DENSITIES = {
+    # Metals
+    "steel": 7.85,
+    "stainless_steel": 8.00,
+    "aluminum": 2.70,
+    "copper": 8.96,
+    "brass": 8.50,
+    "titanium": 4.51,
+    "cast_iron": 7.20,
+    "zinc": 7.13,
+    "magnesium": 1.74,
+    "nickel": 8.90,
+    "tungsten": 19.25,
+    "lead": 11.34,
+    "gold": 19.32,
+    "silver": 10.49,
+    # Plastics
+    "nylon": 1.14,
+    "abs": 1.05,
+    "pla": 1.24,
+    "petg": 1.27,
+    "delrin": 1.41,
+    "ptfe": 2.15,
+    "polycarbonate": 1.20,
+    "acrylic": 1.18,
+    "hdpe": 0.95,
+    "pp": 0.90,
+    # Wood (approximate)
+    "wood_oak": 0.75,
+    "wood_pine": 0.50,
+    "wood_plywood": 0.60,
+    # Other
+    "carbon_fiber": 1.60,
+    "fiberglass": 1.85,
+    "concrete": 2.40,
+    "rubber": 1.20,
+}
+
+
 def _edge_info(idx: int, edge) -> dict:
     """Extract useful info from a single Edge."""
     verts = edge.Vertices()
@@ -158,6 +201,81 @@ def register(mcp: FastMCP) -> None:
                 "num_faces": len(shape.Faces()),
                 "num_edges": len(shape.Edges()),
                 "num_vertices": len(shape.Vertices()),
+            }
+            return json.dumps(info, indent=2)
+        except Exception as e:
+            return f"FAIL Error: {e}"
+
+    @mcp.tool()
+    def mass_properties(
+        name: str, material: Optional[str] = None,
+        density: Optional[float] = None,
+    ) -> str:
+        """Calculate mass properties for an object given a material or density.
+
+        Returns mass, weight, volume, surface area, center of mass, and
+        bounding box. Essential for mechanical design weight estimates.
+
+        Args:
+            name: Name of the object.
+            material: Material name from built-in library (28 materials).
+                     Metals: steel, stainless_steel, aluminum, copper, brass,
+                     titanium, cast_iron, zinc, magnesium, nickel, tungsten,
+                     lead, gold, silver.
+                     Plastics: nylon, abs, pla, petg, delrin, ptfe,
+                     polycarbonate, acrylic, hdpe, pp.
+                     Other: wood_oak, wood_pine, wood_plywood, carbon_fiber,
+                     fiberglass, concrete, rubber.
+                     Ignored if density is provided.
+            density: Material density in g/cm³ (overrides material lookup).
+                    Example: 7.85 for mild steel.
+        """
+        try:
+            shape = require_object(name)
+            vol_mm3 = shape.Volume()
+            vol_cm3 = vol_mm3 / 1000.0  # 1 cm³ = 1000 mm³
+            area_mm2 = shape.Area()
+            com = shape.Center()
+            bb = shape.BoundingBox()
+
+            # Determine density
+            rho = density
+            mat_name = None
+            if rho is None and material:
+                mat_key = material.lower().strip()
+                rho = MATERIAL_DENSITIES.get(mat_key)
+                if rho is None:
+                    return (
+                        f"FAIL Unknown material '{material}'. Available: "
+                        + ", ".join(sorted(MATERIAL_DENSITIES.keys()))
+                    )
+                mat_name = mat_key
+            elif rho is None:
+                return (
+                    "FAIL Provide either a material name or a density value. "
+                    "Example: material='aluminum' or density=2.70"
+                )
+
+            mass_g = vol_cm3 * rho
+            mass_kg = mass_g / 1000.0
+            weight_n = mass_kg * 9.81
+
+            info = {
+                "name": name,
+                "material": mat_name or f"custom (ρ={rho} g/cm³)",
+                "density_g_per_cm3": rho,
+                "volume_mm3": round(vol_mm3, 3),
+                "volume_cm3": round(vol_cm3, 4),
+                "surface_area_mm2": round(area_mm2, 3),
+                "mass_grams": round(mass_g, 3),
+                "mass_kg": round(mass_kg, 6),
+                "weight_newtons": round(weight_n, 4),
+                "center_of_mass": [round(com.x, 3), round(com.y, 3), round(com.z, 3)],
+                "bounding_box": {
+                    "min": [round(bb.xmin, 3), round(bb.ymin, 3), round(bb.zmin, 3)],
+                    "max": [round(bb.xmax, 3), round(bb.ymax, 3), round(bb.zmax, 3)],
+                    "size": [round(bb.xlen, 3), round(bb.ylen, 3), round(bb.zlen, 3)],
+                },
             }
             return json.dumps(info, indent=2)
         except Exception as e:

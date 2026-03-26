@@ -1,18 +1,15 @@
 """Advanced tools: script execution, patterns, and the tool router."""
 
-import json
 import subprocess
 import sys
-import textwrap
-import traceback
 from pathlib import Path
 from typing import Optional
 
 import cadquery as cq
-from cadquery import Vector, exporters
+from cadquery import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
-from caid_mcp.core import scene, require_object, store_object, OUTPUT_DIR, log
+from caid_mcp.core import require_object, store_object, OUTPUT_DIR, log
 
 
 def _run_script_in_subprocess(
@@ -187,6 +184,87 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             return f"FAIL Error: {e}"
 
+    @mcp.tool()
+    def create_circular_pattern(
+        name: str, count: int, radius: float,
+        axis_x: float = 0, axis_y: float = 0, axis_z: float = 1,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
+        start_angle: float = 0, end_angle: float = 360,
+        result_name: Optional[str] = None,
+    ) -> str:
+        """Create a circular (polar) pattern of an existing object.
+
+        Places copies of an object at equal angular intervals around an axis.
+        Common for: bolt hole circles, wheel spokes, radial features.
+
+        Args:
+            name: Source object to pattern.
+            count: Number of copies (including the original position).
+            radius: Distance from center axis to object placement (mm).
+                   Set to 0 if the object is already positioned at the desired radius.
+            axis_x: X component of rotation axis (default 0).
+            axis_y: Y component of rotation axis (default 0).
+            axis_z: Z component of rotation axis (default 1 = Z axis).
+            center_x: X coordinate of rotation center (default 0).
+            center_y: Y coordinate of rotation center (default 0).
+            center_z: Z coordinate of rotation center (default 0).
+            start_angle: Starting angle in degrees (default 0).
+            end_angle: Ending angle in degrees (default 360 for full circle).
+            result_name: Name for the combined result (default: {name}_circular).
+        """
+        try:
+            base_shape = require_object(name)
+
+            # If radius > 0, translate base to radius position offset from center
+            if radius > 0:
+                moved = caid.translate(base_shape, Vector(center_x + radius, center_y, center_z))
+                if moved.shape is None:
+                    return "FAIL Could not move object to radius position"
+                working_shape = moved.shape
+            else:
+                working_shape = base_shape
+
+            center = Vector(center_x, center_y, center_z)
+            axis = Vector(axis_x, axis_y, axis_z)
+            angular_span = end_angle - start_angle
+            is_full_circle = abs(angular_span) >= 359.99
+            # Full circle: divide evenly so last copy doesn't overlap first.
+            # Partial arc: divide by (count-1) so copies land on both endpoints.
+            if is_full_circle or count < 2:
+                angle_step = angular_span / count
+            else:
+                angle_step = angular_span / (count - 1)
+
+            result_shape = None
+            placed = 0
+            for i in range(count):
+                angle = start_angle + i * angle_step
+                if angle == 0:
+                    copy = working_shape
+                else:
+                    rotated = caid.rotate(working_shape, center, axis, angle)
+                    if rotated.shape is None:
+                        continue
+                    copy = rotated.shape
+
+                if result_shape is None:
+                    result_shape = copy
+                    placed += 1
+                else:
+                    fr = caid.boolean_union(result_shape, copy)
+                    if fr.shape is not None:
+                        result_shape = fr.shape
+                        placed += 1
+
+            if result_shape is None:
+                return "FAIL Could not create any copies"
+
+            rname = result_name or f"{name}_circular"
+            store_object(rname, result_shape)
+            return f"OK Created circular pattern of {placed} copies -> '{rname}' (span={angular_span}°)"
+        except Exception as e:
+            return f"FAIL Error: {e}"
+
     # ========================== TOOL ROUTER ==================================
 
     @mcp.tool()
@@ -199,7 +277,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             category: Options: "primitives", "modify", "transforms", "booleans",
                       "scene", "export", "advanced", "heal", "io", "assembly",
-                      "compound", "query", "view".
+                      "compound", "query", "view", "sweep", "fasteners", "history".
         """
         catalog = {
             "primitives": {
@@ -256,6 +334,8 @@ def register(mcp: FastMCP) -> None:
                 "tools": [
                     "preview_object — render SVG preview of one object",
                     "preview_scene — render SVG preview of entire scene",
+                    "render_object — render shaded PNG of one object",
+                    "render_scene — render shaded PNG of entire scene",
                     "export_stl — export to STL for 3D printing",
                     "export_step — export to STEP (lossless CAD format)",
                     "export_all_stl — batch export all objects as STL",
@@ -266,6 +346,7 @@ def register(mcp: FastMCP) -> None:
                 "tools": [
                     "run_cadquery_script — execute CadQuery/CAiD Python code",
                     "create_linear_pattern — rectangular grid pattern",
+                    "create_circular_pattern — polar/radial pattern (bolt circles, spokes)",
                     "discover_tools — this tool (browse available tools)",
                 ],
             },
@@ -310,6 +391,7 @@ def register(mcp: FastMCP) -> None:
                     "list_faces — all faces with index, area, center, normal, type",
                     "measure_object — volume, surface area, center of mass, bounding box",
                     "measure_distance — min distance between two objects",
+                    "mass_properties — mass, weight, center of mass for a material",
                     "find_edges_near_point — nearest edges to a 3D point",
                     "find_faces_near_point — nearest faces to a 3D point",
                 ],
@@ -319,6 +401,35 @@ def register(mcp: FastMCP) -> None:
                 "tools": [
                     "section_view — cut object with a plane, preview cross-section",
                     "exploded_view — push assembly parts outward for inspection",
+                ],
+            },
+            "sweep": {
+                "description": "Sweep and loft operations for complex shapes",
+                "tools": [
+                    "sweep_along_path — sweep a 2D profile along a 3D path",
+                    "sweep_circle_along_path — sweep a circle along a path (tube/pipe)",
+                    "loft_profiles — loft between multiple 2D profiles at different heights",
+                    "loft_circle_to_rect — transition from circle to rectangle",
+                ],
+            },
+            "fasteners": {
+                "description": "ISO metric fastener library (M2–M24)",
+                "tools": [
+                    "list_fastener_sizes — show all sizes with dimensions",
+                    "create_bolt — ISO hex bolt with head, shank, thread",
+                    "create_nut — ISO hex nut with through hole",
+                    "create_washer — ISO plain washer",
+                    "add_clearance_hole — drill a clearance hole for a bolt size",
+                    "add_tap_hole — drill a tap hole for a thread size",
+                ],
+            },
+            "history": {
+                "description": "Undo and scene snapshot system",
+                "tools": [
+                    "save_snapshot — save current scene state",
+                    "restore_snapshot — restore a saved state by index or label",
+                    "list_snapshots — see all saved snapshots",
+                    "undo — quick restore of most recent snapshot",
                 ],
             },
         }
