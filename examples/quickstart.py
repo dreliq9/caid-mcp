@@ -10,7 +10,6 @@ Creates a simple bracket (box + hole + fillet), exports STL and STEP,
 and prints a summary. If it completes without errors, your install is good.
 """
 
-import cadquery as cq
 import caid
 from pathlib import Path
 
@@ -24,7 +23,7 @@ def main():
 
     # 1. Create a base box
     print("\n1. Creating 40x30x10mm box...")
-    box = caid.make_box(40, 30, 10)
+    box = caid.box(40, 30, 10)
     print(f"   {caid.format_result(box)}")
 
     # 2. Add a hole through the top face
@@ -40,19 +39,20 @@ def main():
     # 4. Export STL
     stl_path = OUTPUT_DIR / "quickstart_bracket.stl"
     print(f"4. Exporting STL to {stl_path}...")
-    stl_result = caid.export_stl(filleted, str(stl_path))
+    stl_result = caid.to_stl(filleted, str(stl_path))
     print(f"   {caid.format_result(stl_result)}")
 
     # 5. Export STEP
     step_path = OUTPUT_DIR / "quickstart_bracket.step"
     print(f"5. Exporting STEP to {step_path}...")
-    step_result = caid.export_step(filleted, str(step_path))
+    step_result = caid.to_step(filleted, str(step_path))
     print(f"   {caid.format_result(step_result)}")
 
     # 6. Validate
     print("6. Validating final shape...")
-    valid = caid.check_valid(filleted)
-    print(f"   {caid.format_result(valid)}")
+    info = caid.check_valid(filleted.shape)
+    status = "VALID" if info["is_valid"] else "INVALID"
+    print(f"   {status} — {info['n_faces']} faces, {info['n_edges']} edges")
 
     print("\n" + "=" * 40)
     print("Quickstart complete. If no errors above, your install is working.")
