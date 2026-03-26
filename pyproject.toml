@@ -1,0 +1,29 @@
+[project]
+name = "caid-mcp"
+version = "0.3.1"
+description = "MCP server giving AI agents validated 3D modeling via CAiD + CadQuery"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+  {name = "Adam Steen"},
+  {name = "Claude (Anthropic)", email = "noreply@anthropic.com"},
+]
+dependencies = [
+    "mcp>=1.2.0",
+    "cadquery>=2.4.0",
+    # caid must be installed separately — see README for instructions
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

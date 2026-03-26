@@ -1,0 +1,27 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+.eggs/
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+env/
+
+# Output directory (user-generated files)
+cadquery-output/
+
+# Local Claude Code config (points to LLM_GUIDE.md)
+CLAUDE.md
