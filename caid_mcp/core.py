@@ -184,7 +184,7 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
         _shape_to_brep_file(shape_b, brep_b)
     except Exception as e:
         _cleanup_dir(tmp_dir)
-        return {"ok": False, "shape": None, "msg": f"FAIL exporting operands: {e}", "diagnostics": {}}
+        return ForgeResult(shape=None, valid=False, diagnostics={"reason": f"exporting operands failed: {e}"})
 
     script = (
         "import caid, json\n"
@@ -215,33 +215,21 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
         )
     except subprocess.TimeoutExpired:
         _cleanup_dir(tmp_dir)
-        return {
-            "ok": False, "shape": None,
-            "msg": f"FAIL Boolean {operation} timed out after {timeout}s",
-            "diagnostics": {},
-        }
+        return ForgeResult(shape=None, valid=False,
+                           diagnostics={"reason": f"boolean {operation} timed out after {timeout}s"})
 
     if proc.returncode in (139, -11, -6, 134):
         log.warning(f"Boolean {operation} segfaulted — server is safe")
         _cleanup_dir(tmp_dir)
-        return {
-            "ok": False, "shape": None,
-            "msg": (
-                f"FAIL Boolean {operation} crashed (OCCT segfault). "
-                "The MCP server is still running. Try simplifying the geometry "
-                "or using a different boolean approach."
-            ),
-            "diagnostics": {"reason": "OCCT segfault", "hint": "simplify geometry"},
-        }
+        return ForgeResult(shape=None, valid=False,
+                           diagnostics={"reason": "OCCT segfault",
+                                        "hint": "simplify geometry or try a different boolean approach"})
 
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
         _cleanup_dir(tmp_dir)
-        return {
-            "ok": False, "shape": None,
-            "msg": f"FAIL Boolean {operation} error:\n{stderr}",
-            "diagnostics": {},
-        }
+        return ForgeResult(shape=None, valid=False,
+                           diagnostics={"reason": f"boolean {operation} error: {stderr}"})
 
     diagnostics = {}
     if diag_file.exists():
@@ -256,11 +244,8 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
             result_shape = _brep_file_to_shape(brep_out)
         except Exception as e:
             _cleanup_dir(tmp_dir)
-            return {
-                "ok": False, "shape": None,
-                "msg": f"FAIL Boolean {operation} ran but result reimport failed: {e}",
-                "diagnostics": diagnostics,
-            }
+            return ForgeResult(shape=None, valid=False,
+                               diagnostics={"reason": f"boolean {operation} reimport failed: {e}"})
 
     _cleanup_dir(tmp_dir)
 

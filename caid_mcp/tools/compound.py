@@ -59,12 +59,9 @@ def register(mcp: FastMCP) -> None:
             rname = result_name or f"{source_name}_array"
             msg = format_result(fr, f"Array of {count} copies -> '{rname}'")
             if fr.shape is not None:
-                if isinstance(fr.shape, list):
-                    for i, s in enumerate(fr.shape):
-                        store_object(f"{rname}_{i}", s)
-                    msg += f" | stored as {rname}_0 through {rname}_{len(fr.shape)-1}"
-                else:
-                    store_object(rname, fr.shape)
+                store_object(rname, fr.shape)
+                n = fr.diagnostics.get("n_copies", "?")
+                msg += f" | {n} copies as compound"
             return msg
         except Exception as e:
             return f"FAIL Error: {e}"
