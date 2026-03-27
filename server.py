@@ -60,7 +60,7 @@ history.register(mcp)
 parts_warehouse.register(mcp)
 parts_library.register(mcp)
 
-log.info("CAiD MCP Server v0.4.1 ready — 79 tools — output dir: %s", OUTPUT_DIR)
+log.info("CAiD MCP Server v0.4.0 ready — 79 tools — output dir: %s", OUTPUT_DIR)
 
 # ---------------------------------------------------------------------------
 # Entry point
