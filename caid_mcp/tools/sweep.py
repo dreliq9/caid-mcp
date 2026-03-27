@@ -1,9 +1,61 @@
 """Sweep and loft tools — create solids by sweeping or lofting profiles."""
 
 import json
-import cadquery as cq
+import math
 from mcp.server.fastmcp import FastMCP
-from caid_mcp.core import store_object
+
+from OCP.gp import gp_Pnt, gp_Ax2, gp_Dir, gp_Circ
+from OCP.TColgp import TColgp_Array1OfPnt
+from OCP.GeomAPI import GeomAPI_PointsToBSpline
+from OCP.BRepBuilderAPI import (
+    BRepBuilderAPI_MakeEdge,
+    BRepBuilderAPI_MakeWire,
+    BRepBuilderAPI_MakeFace,
+)
+from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipe, BRepOffsetAPI_ThruSections
+from OCP.TopoDS import TopoDS
+
+from caid_mcp.core import store_object, shape_volume, _unwrap
+
+
+def _make_spline_wire(points_3d):
+    """Build a wire from a BSpline through 3D points."""
+    arr = TColgp_Array1OfPnt(1, len(points_3d))
+    for i, (x, y, z) in enumerate(points_3d):
+        arr.SetValue(i + 1, gp_Pnt(x, y, z))
+    bspline = GeomAPI_PointsToBSpline(arr).Curve()
+    edge = BRepBuilderAPI_MakeEdge(bspline).Edge()
+    wire = BRepBuilderAPI_MakeWire(edge).Wire()
+    return wire
+
+
+def _make_polygon_wire(points_2d, z=0.0):
+    """Build a closed wire from 2D polygon points at a given Z height."""
+    wire_builder = BRepBuilderAPI_MakeWire()
+    pts = [gp_Pnt(p[0], p[1], z) for p in points_2d]
+    for i in range(len(pts)):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % len(pts)]
+        edge = BRepBuilderAPI_MakeEdge(p1, p2).Edge()
+        wire_builder.Add(edge)
+    return wire_builder.Wire()
+
+
+def _make_circle_wire(radius, z=0.0):
+    """Build a circular wire at a given Z height, centered on origin."""
+    ax = gp_Ax2(gp_Pnt(0, 0, z), gp_Dir(0, 0, 1))
+    circ = gp_Circ(ax, radius)
+    edge = BRepBuilderAPI_MakeEdge(circ).Edge()
+    wire = BRepBuilderAPI_MakeWire(edge).Wire()
+    return wire
+
+
+def _make_rect_wire(length, width, z=0.0):
+    """Build a rectangular wire at a given Z height, centered on origin."""
+    hl = length / 2
+    hw = width / 2
+    pts = [(-hl, -hw), (hl, -hw), (hl, hw), (-hl, hw)]
+    return _make_polygon_wire(pts, z=z)
 
 
 def register(mcp: FastMCP) -> None:
@@ -43,19 +95,21 @@ def register(mcp: FastMCP) -> None:
             if any(len(p) != 3 for p in path):
                 return "FAIL Path points must be [x, y, z] (3D coordinates)"
 
-            trans = transition.lower() if transition.lower() in {"round", "transformed", "right"} else "round"
-
             # Build path wire as spline through 3D points
-            path_wire = cq.Workplane("XY").spline(
-                [cq.Vector(*p) for p in path]
-            )
+            path_wire = _make_spline_wire(path)
 
-            # Build profile polygon on XY plane at origin
-            profile_wp = cq.Workplane("XY").polyline(profile).close()
+            # Build profile polygon on XY plane at origin, then make a face
+            profile_wire = _make_polygon_wire(profile, z=0.0)
+            profile_face = BRepBuilderAPI_MakeFace(profile_wire).Face()
 
-            result = profile_wp.sweep(path_wire, transition=trans, multisection=multisection)
-            shape = result.val()
-            vol = shape.Volume()
+            # Sweep profile along path
+            pipe = BRepOffsetAPI_MakePipe(path_wire, profile_face)
+            pipe.Build()
+            if not pipe.IsDone():
+                return "FAIL Sweep operation failed"
+            shape = pipe.Shape()
+
+            vol = shape_volume(shape)
             store_object(name, shape)
             return f"OK Swept profile ({len(profile)} pts) along path ({len(path)} pts) -> '{name}' | volume={vol:.1f}mm3"
         except Exception as e:
@@ -82,13 +136,19 @@ def register(mcp: FastMCP) -> None:
             if len(path) < 2:
                 return "FAIL Path must have at least 2 points"
 
-            path_wire = cq.Workplane("XY").spline(
-                [cq.Vector(*p) for p in path]
-            )
+            path_wire = _make_spline_wire(path)
 
-            result = cq.Workplane("XY").circle(radius).sweep(path_wire)
-            shape = result.val()
-            vol = shape.Volume()
+            # Build circular profile face at origin
+            circle_wire = _make_circle_wire(radius, z=0.0)
+            circle_face = BRepBuilderAPI_MakeFace(circle_wire).Face()
+
+            pipe = BRepOffsetAPI_MakePipe(path_wire, circle_face)
+            pipe.Build()
+            if not pipe.IsDone():
+                return "FAIL Sweep operation failed"
+            shape = pipe.Shape()
+
+            vol = shape_volume(shape)
             store_object(name, shape)
             return f"OK Swept circle (r={radius}) along path ({len(path)} pts) -> '{name}' | volume={vol:.1f}mm3"
         except Exception as e:
@@ -124,28 +184,22 @@ def register(mcp: FastMCP) -> None:
             # Sort by Z height
             data.sort(key=lambda p: p["z"])
 
-            # Build the first profile
-            pts = [tuple(p) for p in data[0]["points"]]
-            if len(pts) < 3:
-                return "FAIL Each profile must have at least 3 points"
-            wp = (
-                cq.Workplane("XY")
-                .workplane(offset=data[0]["z"])
-                .polyline(pts)
-                .close()
-            )
+            # Build ThruSections loft
+            loft = BRepOffsetAPI_ThruSections(True, ruled)
 
-            # Add subsequent profiles using enumerate for correct Z offsets
-            for i, prof in enumerate(data[1:], start=1):
+            for prof in data:
                 pts = [tuple(p) for p in prof["points"]]
                 if len(pts) < 3:
                     return f"FAIL Profile at z={prof['z']} must have at least 3 points"
-                z_delta = prof["z"] - data[i - 1]["z"]
-                wp = wp.workplane(offset=z_delta).polyline(pts).close()
+                wire = _make_polygon_wire(pts, z=prof["z"])
+                loft.AddWire(wire)
 
-            result = wp.loft(ruled=ruled)
-            shape = result.val()
-            vol = shape.Volume()
+            loft.Build()
+            if not loft.IsDone():
+                return "FAIL Loft operation failed"
+            shape = loft.Shape()
+
+            vol = shape_volume(shape)
             store_object(name, shape)
             return (
                 f"OK Lofted {len(data)} profiles (z={data[0]['z']} to z={data[-1]['z']}) "
@@ -173,24 +227,25 @@ def register(mcp: FastMCP) -> None:
             circle_on_top: If True, circle is at the top. Default: circle at bottom.
         """
         try:
-            if circle_on_top:
-                wp = (
-                    cq.Workplane("XY")
-                    .rect(length, width)
-                    .workplane(offset=height)
-                    .circle(radius)
-                )
-            else:
-                wp = (
-                    cq.Workplane("XY")
-                    .circle(radius)
-                    .workplane(offset=height)
-                    .rect(length, width)
-                )
+            loft = BRepOffsetAPI_ThruSections(True, False)
 
-            result = wp.loft()
-            shape = result.val()
-            vol = shape.Volume()
+            if circle_on_top:
+                rect_wire = _make_rect_wire(length, width, z=0.0)
+                circle_wire = _make_circle_wire(radius, z=height)
+                loft.AddWire(rect_wire)
+                loft.AddWire(circle_wire)
+            else:
+                circle_wire = _make_circle_wire(radius, z=0.0)
+                rect_wire = _make_rect_wire(length, width, z=height)
+                loft.AddWire(circle_wire)
+                loft.AddWire(rect_wire)
+
+            loft.Build()
+            if not loft.IsDone():
+                return "FAIL Loft operation failed"
+            shape = loft.Shape()
+
+            vol = shape_volume(shape)
             store_object(name, shape)
             return f"OK Lofted circle-to-rect '{name}': r={radius}, {length}x{width}, h={height} | volume={vol:.1f}mm3"
         except Exception as e:

@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.dreliq9/caid-mcp -->
 
-An MCP server that gives AI agents **validated 3D CAD modeling** via [CAiD](https://github.com/dreliq9/CAiD) and [CadQuery](https://cadquery.readthedocs.io/). No GUI needed — the modeling engine IS the server.
+An MCP server that gives AI agents **validated 3D CAD modeling** via [CAiD](https://github.com/dreliq9/CAiD) and [OCP (OpenCASCADE)](https://github.com/CadQuery/OCP). No GUI needed — the modeling engine IS the server.
 
 Every geometry operation is validated through CAiD's ForgeResult system, which tracks volume, surface area, and diagnostics. If a boolean silently fails (common with OCCT), the validation layer catches it and tells you why.
 
@@ -30,7 +30,7 @@ Use `discover_tools()` to browse, or `discover_tools(category="query")` for a sp
 | **io** | 3 | BREP export, STEP/BREP import |
 | **assembly** | 5 | Create, add parts, move, rotate, merge |
 | **compound** | 3 | Belt wires, curve arrays, pulley assemblies |
-| **advanced** | 3 | CadQuery scripting, linear patterns, tool discovery |
+| **advanced** | 3 | CAiD scripting, linear patterns, tool discovery |
 
 ## Project Structure
 
@@ -73,18 +73,16 @@ caid-mcp/
 ### Prerequisites
 
 - Python 3.11+
-- [CadQuery](https://cadquery.readthedocs.io/) (requires conda or mamba — CadQuery depends on OCCT)
-- [CAiD](https://github.com/dreliq9/CAiD) (CadQuery validation wrapper)
 
 ### Install
 
 ```bash
-# 1. Create a conda environment with CadQuery
-conda create -n cadforge python=3.11 -y
-conda activate cadforge
-conda install -c conda-forge cadquery -y
+# 1. Create a virtual environment
+python -m venv .venv
+source .venv/bin/activate   # macOS/Linux
+# .venv\Scripts\activate    # Windows
 
-# 2. Install CAiD
+# 2. Install CAiD (brings in OCP and all dependencies)
 pip install caid
 
 # 3. Clone and install this server
@@ -96,18 +94,18 @@ pip install -e ".[dev]"
 ### Verify
 
 ```bash
-conda activate cadforge
-python -c "import cadquery; import caid; import mcp; print('All dependencies OK')"
+source .venv/bin/activate
+python -c "import caid; import mcp; print('All dependencies OK')"
 pytest tests/ -v
 ```
 
 ### Connect to Claude Code
 
 ```bash
-claude mcp add-json caid '{"type":"stdio","command":"conda","args":["run","-n","cadforge","python","/FULL/PATH/TO/caid-mcp/server.py"]}' --scope user
+claude mcp add-json caid '{"type":"stdio","command":"/FULL/PATH/TO/.venv/bin/python","args":["/FULL/PATH/TO/caid-mcp/server.py"]}' --scope user
 ```
 
-Replace `/FULL/PATH/TO/caid-mcp` with the actual absolute path.
+Replace `/FULL/PATH/TO/` with the actual absolute paths to your venv Python and the server.py file.
 
 Or edit `~/.claude.json` directly:
 
@@ -116,8 +114,8 @@ Or edit `~/.claude.json` directly:
   "mcpServers": {
     "caid": {
       "type": "stdio",
-      "command": "conda",
-      "args": ["run", "-n", "cadforge", "python", "/FULL/PATH/TO/caid-mcp/server.py"]
+      "command": "/FULL/PATH/TO/.venv/bin/python",
+      "args": ["/FULL/PATH/TO/caid-mcp/server.py"]
     }
   }
 }
@@ -154,7 +152,7 @@ measure_distance(a, b)      → min distance between two objects
 
 ### Index-Based Edge/Face Selection
 
-Instead of guessing CadQuery selector strings like `">Z"`, the LLM can now:
+Instead of guessing selector strings like `">Z"`, the LLM can now:
 1. Call `list_edges` to see all edges with their indices
 2. Call `fillet_edges(name, radius, edge_indices="[2, 5, 8]")` to target exactly those edges
 
@@ -171,14 +169,18 @@ exploded_view("assembly", scale=2.5)        → push parts outward for inspectio
 
 Every CAiD operation returns a ForgeResult with volume tracking. If a boolean union doesn't increase volume, you get a warning with a hint (shapes may not overlap). Silent OCCT failures are caught automatically.
 
-### CadQuery Scripting Escape Hatch
+### CAiD Scripting Escape Hatch
 
-When built-in tools can't do the job, `run_cadquery_script` gives full access to CadQuery and CAiD:
+When built-in tools can't do the job, `run_cadquery_script` (name kept for API compatibility) gives full access to CAiD and OCP:
 
 ```python
 script = """
-obj = cq.Workplane("XY").add(scene["base"])
-result = obj.faces(">Z").workplane().pushPoints([(10,10),(-10,-10)]).hole(3)
+from caid.vector import Vector
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+from OCP.gp import gp_Pnt
+
+# Use CAiD helpers or raw OCP calls
+result = caid.make_box(20, 20, 10)
 """
 ```
 
@@ -186,7 +188,7 @@ result = obj.faces(">Z").workplane().pushPoints([(10,10),(-10,-10)]).hole(3)
 
 ## Output Files
 
-All exports go to `~/cadquery-output/` by default. Override with:
+All exports go to `~/cadquery-output/` by default (directory name kept for backward compatibility). Override with:
 
 ```bash
 export CAID_OUTPUT_DIR=/your/path
@@ -250,7 +252,7 @@ Claude Code / Claude Desktop / any MCP client
         └── tools/advanced — scripting, patterns, tool router
               │
               ▼
-        CAiD → CadQuery → OpenCASCADE kernel
+        CAiD → OCP (OpenCASCADE) kernel
               │
               ▼
         STL / STEP / BREP / SVG files
@@ -260,17 +262,17 @@ Claude Code / Claude Desktop / any MCP client
 
 ## Troubleshooting
 
-**"CadQuery is not installed"** — Activate the conda environment: `conda activate cadforge`
+**"CAiD is not installed"** — Make sure you installed CAiD in the same venv: `pip install caid`
 
-**"CAiD is not installed"** — `pip install caid` in the cadforge environment
+**"OCP is not installed"** — OCP is installed automatically as a dependency of CAiD. If missing: `pip install OCP`
 
-**Claude Code doesn't show tools** — `claude mcp list` to check registration. Make sure the path is absolute. Restart Claude Code.
+**Claude Code doesn't show tools** — `claude mcp list` to check registration. Make sure the path to your venv's Python binary is absolute. Restart Claude Code.
 
 **SVG preview is blank** — Object might have zero volume. Use `list_objects` to check dimensions.
 
 **Fillet/chamfer fails** — Try `heal_object` first, then retry with a smaller radius. Use `list_edges` to verify the shortest edge length.
 
-**Tests failing** — Make sure you're in the cadforge conda env: `conda activate cadforge && pytest tests/ -v`
+**Tests failing** — Make sure you're in the venv: `source .venv/bin/activate && pytest tests/ -v`
 
 ---
 

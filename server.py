@@ -14,9 +14,9 @@ from mcp.server.fastmcp import FastMCP
 
 # Verify dependencies
 try:
-    import cadquery as cq
+    import OCP
 except ImportError:
-    print("CadQuery is not installed. Install with: pip install cadquery", file=sys.stderr)
+    print("OCP (cadquery-ocp) is not installed. Install with: pip install cadquery-ocp", file=sys.stderr)
     sys.exit(1)
 
 try:

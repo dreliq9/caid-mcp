@@ -1,11 +1,9 @@
-"""Export tools (STL, STEP), visual preview (SVG), and shaded PNG rendering."""
+"""Export tools (STL, STEP), visual preview (PNG render), and shaded PNG rendering."""
 
 import tempfile
 from typing import Optional
 from pathlib import Path
 
-import cadquery as cq
-from cadquery import exporters
 from mcp.server.fastmcp import FastMCP
 import caid
 import numpy as np
@@ -15,25 +13,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-from caid_mcp.core import scene, require_object, OUTPUT_DIR, log
-
-
-def _wrap_for_svg(shape) -> cq.Workplane:
-    """Wrap a raw shape in a Workplane for CQ's SVG exporter."""
-    return cq.Workplane("XY").add(shape)
+from caid_mcp.core import scene, require_object, OUTPUT_DIR, log, shape_bounding_box, _unwrap
 
 
 def _shape_to_trimesh(shape, tolerance: float = 0.1) -> trimesh.Trimesh:
     """Tessellate an OCP shape to a trimesh mesh via temp STL."""
-    wp = cq.Workplane("XY").add(shape)
+    raw = _unwrap(shape)
     tmp = tempfile.NamedTemporaryFile(suffix=".stl", delete=False)
     tmp.close()
     try:
-        exporters.export(
-            wp, tmp.name,
-            exportType=exporters.ExportTypes.STL,
-            tolerance=tolerance,
-        )
+        fr = caid.to_stl(raw, tmp.name, tolerance=tolerance)
+        if not fr.valid:
+            raise RuntimeError(f"STL tessellation failed: {fr.diagnostics.get('reason', 'unknown')}")
         mesh = trimesh.load(tmp.name)
     finally:
         Path(tmp.name).unlink(missing_ok=True)
@@ -132,60 +123,41 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def preview_object(
         name: str,
-        width: int = 600,
-        height: int = 400,
-        projection: str = "isometric",
+        width: int = 800,
+        height: int = 600,
+        projection: str = "iso",
     ) -> str:
-        """Render an SVG preview of an object so you can see what it looks like.
+        """Render a shaded PNG preview of an object (redirects to render_object).
 
-        Returns the SVG as inline XML text. Use this to visually verify geometry
-        before exporting.
+        SVG preview has been replaced by shaded PNG rendering which produces
+        much better visual output.
 
         Args:
             name: Name of the object to preview.
-            width: Image width in pixels (default 600).
-            height: Image height in pixels (default 400).
-            projection: View angle: "isometric", "front", "top", or "right".
+            width: Image width in pixels (default 800).
+            height: Image height in pixels (default 600).
+            projection: View angle: "iso", "front", "top", or "right".
         """
         try:
             shape = require_object(name)
-            wp = _wrap_for_svg(shape)
+            mesh = _shape_to_trimesh(shape)
 
-            proj_map = {
-                "isometric": (1, -1, 0.5),
-                "front": (0, -1, 0),
-                "top": (0, 0, -1),
-                "right": (-1, 0, 0),
-            }
-            proj_dir = proj_map.get(projection, proj_map["isometric"])
+            bb = shape_bounding_box(shape)
+            dims = f"{bb['xlen']:.1f} x {bb['ylen']:.1f} x {bb['zlen']:.1f} mm"
 
-            tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
-            tmp.close()
-            exporters.export(
-                wp, tmp.name,
-                exportType=exporters.ExportTypes.SVG,
-                opt={
-                    "width": width,
-                    "height": height,
-                    "projectionDir": proj_dir,
-                    "showAxes": False,
-                    "showHidden": False,
-                },
+            view = projection if projection in _VIEW_ANGLES else "iso"
+            png_path = OUTPUT_DIR / f"{name}_preview.png"
+            elev, azim = _VIEW_ANGLES[view]
+            _render_mesh_to_png(
+                mesh, png_path,
+                width=width, height=height,
+                elev=elev, azim=azim,
             )
-            with open(tmp.name) as f:
-                svg_content = f.read()
-            Path(tmp.name).unlink(missing_ok=True)
 
-            svg_path = OUTPUT_DIR / f"{name}_preview.svg"
-            svg_path.write_text(svg_content)
-
-            bb = shape.BoundingBox()
-            dims = f"{bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
-
+            size_kb = png_path.stat().st_size / 1024
             return (
-                f"OK Preview of '{name}' ({dims}, {projection} view):\n"
-                f"Saved to: {svg_path}\n\n"
-                f"{svg_content}"
+                f"OK Preview of '{name}' ({dims}, {view} view) -> {png_path} ({size_kb:.1f} KB)\n"
+                f"Use Read tool on {png_path} to view the image."
             )
         except Exception as e:
             return f"FAIL Error rendering preview: {e}"
@@ -193,9 +165,9 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def preview_scene(
         width: int = 800,
-        height: int = 500,
+        height: int = 600,
     ) -> str:
-        """Render an SVG preview of ALL objects in the scene combined.
+        """Render a shaded PNG preview of ALL objects in the scene combined.
 
         Args:
             width: Image width in pixels.
@@ -204,41 +176,34 @@ def register(mcp: FastMCP) -> None:
         if not scene:
             return "Scene is empty — nothing to preview."
         try:
-            shapes = list(scene.values())
-            combined = shapes[0]
-            for s in shapes[1:]:
-                try:
-                    fr = caid.boolean_union(combined, s)
-                    if fr.shape is not None:
-                        combined = fr.shape
-                except Exception:
-                    pass
+            palette = [
+                "#4a90d9", "#e74c3c", "#2ecc71", "#f39c12",
+                "#9b59b6", "#1abc9c", "#e67e22", "#3498db",
+            ]
+            meshes_and_colors = []
+            for i, (obj_name, shape) in enumerate(scene.items()):
+                mesh = _shape_to_trimesh(shape)
+                meshes_and_colors.append((mesh, palette[i % len(palette)], obj_name))
 
-            wp = _wrap_for_svg(combined)
+            fig = plt.figure(figsize=(width / 100, height / 100))
+            ax = fig.add_subplot(111, projection="3d")
+            all_verts_list = []
+            for mesh, hex_color, _ in meshes_and_colors:
+                _add_shaded_mesh(ax, mesh, hex_color)
+                all_verts_list.append(mesh.vertices)
+            combined = np.vstack(all_verts_list)
+            elev, azim = _VIEW_ANGLES["iso"]
+            _setup_ax(ax, combined, elev, azim)
 
-            tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False)
-            tmp.close()
-            exporters.export(
-                wp, tmp.name,
-                exportType=exporters.ExportTypes.SVG,
-                opt={
-                    "width": width,
-                    "height": height,
-                    "projectionDir": (1, -1, 0.5),
-                    "showAxes": False,
-                },
-            )
-            with open(tmp.name) as f:
-                svg_content = f.read()
-            Path(tmp.name).unlink(missing_ok=True)
+            png_path = OUTPUT_DIR / "scene_preview.png"
+            fig.savefig(str(png_path), dpi=150, bbox_inches="tight", facecolor="white")
+            plt.close(fig)
 
-            svg_path = OUTPUT_DIR / "scene_preview.svg"
-            svg_path.write_text(svg_content)
-
+            size_kb = png_path.stat().st_size / 1024
+            obj_list = ", ".join(n for _, _, n in meshes_and_colors)
             return (
-                f"OK Scene preview ({len(scene)} objects):\n"
-                f"Saved to: {svg_path}\n\n"
-                f"{svg_content}"
+                f"OK Scene preview ({len(scene)} objects: {obj_list}) -> {png_path} ({size_kb:.1f} KB)\n"
+                f"Use Read tool on {png_path} to view the image."
             )
         except Exception as e:
             return f"FAIL Error rendering scene preview: {e}"
@@ -273,8 +238,8 @@ def register(mcp: FastMCP) -> None:
             shape = require_object(name)
             mesh = _shape_to_trimesh(shape, tolerance=tolerance)
 
-            bb = shape.BoundingBox()
-            dims = f"{bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+            bb = shape_bounding_box(shape)
+            dims = f"{bb['xlen']:.1f} x {bb['ylen']:.1f} x {bb['zlen']:.1f} mm"
 
             if view == "multi":
                 png_path = OUTPUT_DIR / f"{name}_render_multi.png"

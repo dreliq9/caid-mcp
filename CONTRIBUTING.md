@@ -5,9 +5,10 @@ Thanks for your interest in contributing. This guide covers how to add tools, ru
 ## Setup
 
 ```bash
-conda create -n cadforge python=3.11 -y
-conda activate cadforge
-conda install -c conda-forge cadquery -y
+python -m venv .venv
+source .venv/bin/activate   # macOS/Linux
+# .venv\Scripts\activate    # Windows
+
 pip install caid
 pip install -e ".[dev]"
 ```
@@ -53,15 +54,15 @@ your_module.register(mcp)
 ## Tool conventions
 
 - Tools return **strings**, not exceptions. Use `OK`, `WARN`, or `FAIL` prefixes.
-- Store results in the scene via `store_object()`. It auto-extracts from ForgeResult and Workplane.
+- Store results in the scene via `store_object()`. It auto-extracts from ForgeResult.
 - Use `require_object()` to fetch scene objects — it raises `ValueError` with a clear message if the object doesn't exist.
-- For operations that modify geometry, use CAiD's validated functions when available. Raw CadQuery is fine for queries and transforms.
+- For operations that modify geometry, use CAiD's validated functions when available. Raw OCP calls are fine for queries and transforms.
 - Include volume/area in the return string when the operation changes geometry.
 
 ## Running tests
 
 ```bash
-conda activate cadforge
+source .venv/bin/activate
 pytest tests/ -v
 ```
 

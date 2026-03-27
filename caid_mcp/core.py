@@ -11,11 +11,15 @@ import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
-import cadquery as cq
 import caid
+from caid.vector import Vector
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
+from OCP.BRepGProp import BRepGProp
+from OCP.GProp import GProp_GProps
+from OCP.Bnd import Bnd_Box
+from OCP.BRepBndLib import BRepBndLib
 from caid.result import ForgeResult
 from caid.assembly import Assembly
 
@@ -48,6 +52,51 @@ scene: dict[str, Any] = {}
 assemblies: dict[str, Assembly] = {}
 
 
+# ---------------------------------------------------------------------------
+# OCP shape helpers
+# ---------------------------------------------------------------------------
+
+def _unwrap(shape: Any):
+    """Get the raw OCP TopoDS_Shape."""
+    if hasattr(shape, "wrapped"):
+        return shape.wrapped
+    return shape
+
+
+def shape_volume(shape: Any) -> float:
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(_unwrap(shape), props)
+    return props.Mass()
+
+
+def shape_area(shape: Any) -> float:
+    props = GProp_GProps()
+    BRepGProp.SurfaceProperties_s(_unwrap(shape), props)
+    return props.Mass()
+
+
+def shape_center(shape: Any) -> tuple[float, float, float]:
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(_unwrap(shape), props)
+    c = props.CentreOfMass()
+    return (c.X(), c.Y(), c.Z())
+
+
+def shape_bounding_box(shape: Any) -> dict:
+    bbox = Bnd_Box()
+    BRepBndLib.Add_s(_unwrap(shape), bbox)
+    xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+    return {
+        "xmin": xmin, "ymin": ymin, "zmin": zmin,
+        "xmax": xmax, "ymax": ymax, "zmax": zmax,
+        "xlen": xmax - xmin, "ylen": ymax - ymin, "zlen": zmax - zmin,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scene management
+# ---------------------------------------------------------------------------
+
 def get_object(name: str) -> Optional[Any]:
     """Get a named shape from the scene, or None."""
     return scene.get(name)
@@ -62,19 +111,17 @@ def require_object(name: str) -> Any:
 
 
 def store_object(name: str, obj: Any) -> None:
-    """Store a shape in the scene. Auto-extracts from ForgeResult or Workplane."""
+    """Store a shape in the scene. Auto-extracts from ForgeResult."""
     if isinstance(obj, ForgeResult):
         obj = obj.unwrap()
-    elif isinstance(obj, cq.Workplane):
-        obj = obj.val()
     scene[name] = obj
 
 
 def object_summary(name: str, obj: Any) -> str:
     """Return a one-line summary of a shape."""
     try:
-        bb = obj.BoundingBox()
-        return f"'{name}': {bb.xlen:.1f} x {bb.ylen:.1f} x {bb.zlen:.1f} mm"
+        bb = shape_bounding_box(obj)
+        return f"'{name}': {bb['xlen']:.1f} x {bb['ylen']:.1f} x {bb['zlen']:.1f} mm"
     except Exception:
         return f"'{name}': (dimensions unavailable)"
 
@@ -112,12 +159,12 @@ def format_result(fr: ForgeResult, prefix: str) -> str:
 
 def _shape_to_brep_file(shape, path: Path) -> None:
     """Write an OCP shape to a BREP file."""
-    wrapped = shape.wrapped if hasattr(shape, "wrapped") else shape
+    wrapped = _unwrap(shape)
     BRepTools.Write_s(wrapped, str(path))
 
 
 def _brep_file_to_shape(path: Path):
-    """Read a BREP file back into a CadQuery shape."""
+    """Read a BREP file back into an OCP shape."""
     fr = caid.from_brep(path)
     if fr.ok:
         return fr.shape
@@ -125,17 +172,7 @@ def _brep_file_to_shape(path: Path):
 
 
 def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
-    """Run a boolean operation in a subprocess to survive OCCT segfaults.
-
-    Args:
-        shape_a: First operand (CadQuery Shape).
-        shape_b: Second operand (CadQuery Shape).
-        operation: One of "union", "cut", "intersect".
-        timeout: Max seconds before killing the subprocess.
-
-    Returns:
-        ForgeResult-like dict with keys: ok, shape (or None), msg, diagnostics.
-    """
+    """Run a boolean operation in a subprocess to survive OCCT segfaults."""
     tmp_dir = Path(tempfile.mkdtemp(prefix="caid_bool_"))
     brep_a = tmp_dir / "a.brep"
     brep_b = tmp_dir / "b.brep"
@@ -166,7 +203,8 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
         f"Path('{diag_file}').write_text(json.dumps(diag))\n"
         "if fr.shape is not None:\n"
         "    from OCP.BRepTools import BRepTools\n"
-        f"    BRepTools.Write_s(fr.shape.wrapped, '{brep_out}')\n"
+        "    wrapped = fr.shape.wrapped if hasattr(fr.shape, 'wrapped') else fr.shape\n"
+        f"    BRepTools.Write_s(wrapped, '{brep_out}')\n"
     )
 
     try:
@@ -183,7 +221,6 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
             "diagnostics": {},
         }
 
-    # Segfault
     if proc.returncode in (139, -11, -6, 134):
         log.warning(f"Boolean {operation} segfaulted — server is safe")
         _cleanup_dir(tmp_dir)
@@ -197,7 +234,6 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
             "diagnostics": {"reason": "OCCT segfault", "hint": "simplify geometry"},
         }
 
-    # Other errors
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
         _cleanup_dir(tmp_dir)
@@ -207,7 +243,6 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
             "diagnostics": {},
         }
 
-    # Read diagnostics
     diagnostics = {}
     if diag_file.exists():
         try:
@@ -215,7 +250,6 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
         except Exception:
             pass
 
-    # Read result shape
     result_shape = None
     if brep_out.exists():
         try:
@@ -230,10 +264,8 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
 
     _cleanup_dir(tmp_dir)
 
-    was_ok = diagnostics.get("ok", False)
     was_valid = diagnostics.get("valid", False)
 
-    # Build a ForgeResult so callers can use format_result()
     fr = ForgeResult(
         shape=result_shape,
         valid=was_valid,
@@ -246,7 +278,6 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
 
 
 def _cleanup_dir(d: Path) -> None:
-    """Remove a temp directory and its contents."""
     try:
         for f in d.iterdir():
             f.unlink(missing_ok=True)

@@ -3,7 +3,6 @@ CAiD MCP — Quickstart Verification Script
 
 Run this after installation to confirm everything works:
 
-    conda activate cadforge
     python examples/quickstart.py
 
 Creates a simple bracket (box + hole + fillet), exports STL and STEP,

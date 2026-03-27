@@ -1,6 +1,6 @@
 """Spatial transformation tools — backed by caid."""
 
-from cadquery import Vector
+from caid.vector import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid_mcp.core import require_object, store_object, format_result

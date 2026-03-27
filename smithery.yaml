@@ -6,9 +6,12 @@ startCommand:
       CAID_OUTPUT_DIR:
         type: string
         description: "Directory for exported STL/STEP/BREP files (default: ~/cadquery-output/)"
+      PYTHON_PATH:
+        type: string
+        description: "Absolute path to the Python binary in your venv (e.g., /home/user/.venv/bin/python)"
   commandFunction: |
     (config) => ({
-      command: "conda",
-      args: ["run", "-n", "cadforge", "python", "server.py"],
+      command: config.PYTHON_PATH || "python",
+      args: ["server.py"],
       env: config.CAID_OUTPUT_DIR ? { CAID_OUTPUT_DIR: config.CAID_OUTPUT_DIR } : {}
     })

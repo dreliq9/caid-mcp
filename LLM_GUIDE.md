@@ -1,6 +1,6 @@
 # CAiD MCP Server
 
-MCP server giving you (Claude) validated 3D modeling via CAiD — a CadQuery wrapper that validates every operation. 54 tools across 13 categories. Output goes to `~/cadquery-output/`.
+MCP server giving you (Claude) validated 3D modeling via CAiD — a validation layer on top of OCP (OpenCASCADE). 54 tools across 13 categories. Output goes to `~/cadquery-output/`.
 
 Every geometry operation returns a ForgeResult with volume tracking and diagnostics. If an operation silently fails (common with OCCT booleans), the validation layer catches it and tells you what went wrong.
 
@@ -24,14 +24,14 @@ Before applying fillets, chamfers, or holes to specific locations:
 
 This avoids guessing with selector strings like `">Z"` and getting the wrong edge.
 
-## Scene stores Shapes, not Workplanes
-Objects in the scene are raw `cq.Shape` (Solid/Compound), not `cq.Workplane`. When using `run_cadquery_script`, wrap scene objects with `cq.Workplane("XY").add(scene["name"])` if you need workplane operations. The `store_object` function auto-extracts from Workplane or ForgeResult, so scripts can return any type.
+## Scene stores raw OCP shapes
+Objects in the scene are raw `TopoDS_Shape` objects (Solid/Compound), not workplane wrappers. When using `run_cadquery_script`, you work directly with OCP shapes from the scene dict. The `store_object` function auto-extracts from ForgeResult, so scripts can return either type.
 
 ## Parameter gotchas
-- `add_hole` takes **radius**, but doubles it internally for CQ's diameter-based `.hole()`. For metric screws: M2=r1.0, M2.5=r1.25, M3=r1.5, M4=r2.0, M5=r2.5, M6=r3.0
+- `add_hole` takes **radius**, but doubles it internally for the diameter-based hole operation. For metric screws: M2=r1.0, M2.5=r1.25, M3=r1.5, M4=r2.0, M5=r2.5, M6=r3.0
 - `create_extruded_polygon` and `create_revolved_profile` take `points` as a **JSON string**, not a native array. Always pass: `points='[[0,0],[10,0],[10,10]]'`
 - `create_revolved_profile` revolves around the **Y axis**, not Z. Profile points are in the XZ plane.
-- `fillet_edges` and `chamfer_edges` accept either `edge_selector` (CQ string like `">Z"`, `"|X"`) or `edge_indices` (JSON array like `"[0, 3, 7]"` from `list_edges`). Indices override the selector.
+- `fillet_edges` and `chamfer_edges` accept either `edge_selector` (string like `">Z"`, `"|X"`) or `edge_indices` (JSON array like `"[0, 3, 7]"` from `list_edges`). Indices override the selector.
 - `fillet_edges` radius must be **less than half the shortest edge**. Use `list_edges` to check edge lengths first.
 - `add_hole` accepts either `face_selector` (string) or `face_index` (int from `list_faces`). Default is `">Z"` (top face in global coordinates).
 - `shell_object` accepts either `face_to_remove` (string) or `face_index` (int). Default removes top face.
@@ -75,20 +75,21 @@ Use `section_view` to cut through objects and verify internal features:
 - STL tolerance: 0.1 for most parts, 0.01 for small/detailed, never below 0.001
 
 ## Escape hatch: run_cadquery_script
-When built-in tools can't do the job, `run_cadquery_script` has access to:
-- `cq` — the cadquery module
+The tool name `run_cadquery_script` is kept for API compatibility — it actually runs CAiD/OCP code. The script environment has access to:
 - `caid` — the CAiD module (validated operations)
-- `Vector` — cadquery.Vector for convenience
-- `scene` — the scene dict (raw shapes, not Workplanes)
+- `Vector` — from `caid.vector` (not cadquery)
+- `scene` — the scene dict (raw `TopoDS_Shape` objects)
 - `OUTPUT_DIR` — Path to output directory
-- `exporters` — CadQuery export module
+- OCP modules can be imported directly (e.g., `from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox`)
 
-Scripts can return raw Shape, Workplane, or ForgeResult — all handled by `store_object`.
+Scripts can return raw `TopoDS_Shape` or ForgeResult — both handled by `store_object`.
 
 ```python
 script = """
-obj = cq.Workplane("XY").add(scene["base"])
-result = obj.faces(">Z").workplane().pushPoints([(10,10),(-10,-10)]).hole(3)
+from caid.vector import Vector
+# Work with scene objects directly
+shape = scene["base"]
+result = caid.make_box(20, 20, 10)
 """
 # Call with result_name="base" to update the object in-scene
 ```
