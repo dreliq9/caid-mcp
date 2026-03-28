@@ -33,7 +33,7 @@ def _run_script_in_subprocess(
             '        _obj = _obj.unwrap()\n'
             '    from OCP.BRepTools import BRepTools\n'
             '    _wrapped = _obj.wrapped if hasattr(_obj, "wrapped") else _obj\n'
-            f'    BRepTools.Write_s(_wrapped, "{result_brep_path}")\n'
+            f'    BRepTools.Write_s(_wrapped, {repr(str(result_brep_path))})\n'
             '    print("__RESULT_EXPORTED__")\n'
         )
 
@@ -41,7 +41,7 @@ def _run_script_in_subprocess(
         "from caid.vector import Vector\n"
         "import caid\n"
         "from pathlib import Path\n"
-        f"OUTPUT_DIR = Path(\"{OUTPUT_DIR}\")\n"
+        f"OUTPUT_DIR = Path({repr(str(OUTPUT_DIR))})\n"
         "scene = {}\n"
         "\n"
         f"{script}\n"

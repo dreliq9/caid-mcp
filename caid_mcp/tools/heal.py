@@ -3,7 +3,9 @@
 import json
 from mcp.server.fastmcp import FastMCP
 import caid
-from caid_mcp.core import require_object, store_object, format_result
+from caid_mcp.core import require_object, store_object, format_result, _unwrap
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_FACE
 
 
 def register(mcp: FastMCP) -> None:
@@ -62,12 +64,22 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            faces_before = len(shape.Faces())
+
+            def _count_faces(s):
+                wrapped = _unwrap(s)
+                exp = TopExp_Explorer(wrapped, TopAbs_FACE)
+                count = 0
+                while exp.More():
+                    count += 1
+                    exp.Next()
+                return count
+
+            faces_before = _count_faces(shape)
             fr = caid.simplify(shape, tolerance)
             msg = format_result(fr, f"Simplified '{name}'")
             if fr.shape is not None:
                 store_object(name, fr.shape)
-                faces_after = len(fr.shape.Faces())
+                faces_after = _count_faces(fr.shape)
                 msg += f" | faces: {faces_before} -> {faces_after}"
             return msg
         except Exception as e:

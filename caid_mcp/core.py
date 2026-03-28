@@ -190,8 +190,8 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
         "import caid, json\n"
         "from pathlib import Path\n"
         f"fr = caid.boolean_{operation}(\n"
-        f"    caid.from_brep(Path('{brep_a}')).shape,\n"
-        f"    caid.from_brep(Path('{brep_b}')).shape,\n"
+        f"    caid.from_brep(Path({repr(str(brep_a))})).shape,\n"
+        f"    caid.from_brep(Path({repr(str(brep_b))})).shape,\n"
         ")\n"
         "diag = dict(fr.diagnostics) if fr.diagnostics else {}\n"
         "diag['ok'] = fr.ok\n"
@@ -200,11 +200,11 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
         "    diag['volume_after'] = fr.volume_after\n"
         "if fr.surface_area is not None:\n"
         "    diag['surface_area'] = fr.surface_area\n"
-        f"Path('{diag_file}').write_text(json.dumps(diag))\n"
+        f"Path({repr(str(diag_file))}).write_text(json.dumps(diag))\n"
         "if fr.shape is not None:\n"
         "    from OCP.BRepTools import BRepTools\n"
         "    wrapped = fr.shape.wrapped if hasattr(fr.shape, 'wrapped') else fr.shape\n"
-        f"    BRepTools.Write_s(wrapped, '{brep_out}')\n"
+        f"    BRepTools.Write_s(wrapped, {repr(str(brep_out))})\n"
     )
 
     try:

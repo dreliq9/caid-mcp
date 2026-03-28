@@ -3,7 +3,15 @@
 import json
 from mcp.server.fastmcp import FastMCP
 import caid
-from caid_mcp.core import scene, require_object, store_object, object_summary
+from caid_mcp.core import (
+    scene, require_object, store_object, object_summary,
+    _unwrap, shape_volume, shape_area, shape_bounding_box,
+)
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX
+from OCP.BRepTools import BRepTools
+from OCP.BRep import BRep_Builder
+from OCP.TopoDS import TopoDS_Shape
 
 
 def register(mcp: FastMCP) -> None:
@@ -26,21 +34,30 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            bb = shape.BoundingBox()
+            bb = shape_bounding_box(shape)
             validity = caid.check_valid(shape)
+
+            def _count_topo(topo_type):
+                wrapped = _unwrap(shape)
+                exp = TopExp_Explorer(wrapped, topo_type)
+                count = 0
+                while exp.More():
+                    count += 1
+                    exp.Next()
+                return count
+
             info = {
                 "name": name,
                 "bounding_box": {
-                    "x_min": round(bb.xmin, 3), "x_max": round(bb.xmax, 3),
-                    "y_min": round(bb.ymin, 3), "y_max": round(bb.ymax, 3),
-                    "z_min": round(bb.zmin, 3), "z_max": round(bb.zmax, 3),
-                    "dimensions": f"{bb.xlen:.2f} x {bb.ylen:.2f} x {bb.zlen:.2f} mm",
+                    "x_min": round(bb["xmin"], 3), "x_max": round(bb["xmax"], 3),
+                    "y_min": round(bb["ymin"], 3), "y_max": round(bb["ymax"], 3),
+                    "z_min": round(bb["zmin"], 3), "z_max": round(bb["zmax"], 3),
+                    "dimensions": f"{bb['xlen']:.2f} x {bb['ylen']:.2f} x {bb['zlen']:.2f} mm",
                 },
-                "center": f"({bb.center.x:.2f}, {bb.center.y:.2f}, {bb.center.z:.2f})",
-                "volume_mm3": round(shape.Volume(), 3),
-                "num_faces": len(shape.Faces()),
-                "num_edges": len(shape.Edges()),
-                "num_vertices": len(shape.Vertices()),
+                "volume_mm3": round(shape_volume(shape), 3),
+                "num_faces": _count_topo(TopAbs_FACE),
+                "num_edges": _count_topo(TopAbs_EDGE),
+                "num_vertices": _count_topo(TopAbs_VERTEX),
                 "is_valid": validity.get("is_valid", "unknown"),
             }
             return json.dumps(info, indent=2)
@@ -69,7 +86,20 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             shape = require_object(name)
-            store_object(new_name, shape)
+            # Deep copy via BREP serialization to avoid shared references
+            import tempfile
+            from pathlib import Path
+            wrapped = _unwrap(shape)
+            tmp = Path(tempfile.mktemp(suffix=".brep"))
+            try:
+                BRepTools.Write_s(wrapped, str(tmp))
+                builder = BRep_Builder()
+                copy_shape = TopoDS_Shape()
+                BRepTools.Read_s(copy_shape, str(tmp), builder)
+                from caid._backend import get_backend
+                store_object(new_name, get_backend().wrap_shape(copy_shape))
+            finally:
+                tmp.unlink(missing_ok=True)
             return f"OK Duplicated '{name}' -> '{new_name}'"
         except Exception as e:
             return f"FAIL Error: {e}"

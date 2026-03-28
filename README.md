@@ -184,6 +184,8 @@ result = caid.make_box(20, 20, 10)
 """
 ```
 
+> **Security note:** `run_cadquery_script` executes arbitrary Python in a subprocess with no sandboxing. The subprocess has full filesystem and network access. This is safe when the MCP server is used locally with trusted clients (e.g., Claude Code on your own machine). Do not expose this server to untrusted users without adding sandboxing — see [Planned Fixes](#planned-fixes) below.
+
 ---
 
 ## Output Files
@@ -273,6 +275,13 @@ Claude Code / Claude Desktop / any MCP client
 **Fillet/chamfer fails** — Try `heal_object` first, then retry with a smaller radius. Use `list_edges` to verify the shortest edge length.
 
 **Tests failing** — Make sure you're in the venv: `source .venv/bin/activate && pytest tests/ -v`
+
+---
+
+## Planned Fixes
+
+- **Sandbox `run_cadquery_script`** — The scripting escape hatch currently runs arbitrary Python with no restrictions. Planned: restricted imports whitelist, filesystem jailing to `OUTPUT_DIR`, network access disabled. Until then, only use with trusted MCP clients.
+- **Windows path handling** — Fixed in v0.4.1. Subprocess scripts previously used f-string path interpolation that broke on Windows backslashes.
 
 ---
 

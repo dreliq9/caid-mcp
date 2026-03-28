@@ -88,14 +88,21 @@ def register(mcp: FastMCP) -> None:
                 return "FAIL Need at least 2 objects to combine"
             result_shape = require_object(name_list[0])
             warnings = []
+            failed_count = 0
             for n in name_list[1:]:
                 fr = safe_boolean(result_shape, require_object(n), "union")
                 if isinstance(fr, dict):
                     return fr["msg"]
                 if fr.shape is not None:
                     result_shape = fr.shape
+                else:
+                    failed_count += 1
+                    warnings.append(f"{n}: union produced no shape")
+                    continue
                 if not fr.valid:
                     warnings.append(f"{n}: {fr.diagnostics.get('reason', '?')}")
+            if failed_count == len(name_list) - 1:
+                return f"FAIL All {failed_count} union(s) failed — no result produced"
             store_object(result_name, result_shape)
             msg = f"OK Combined {len(name_list)} objects -> '{result_name}'"
             if warnings:
