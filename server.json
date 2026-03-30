@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.dreliq9/caid-mcp",
   "title": "CAiD MCP Server",
-  "description": "Validated 3D CAD modeling for AI agents via CAiD + CadQuery. 54 tools with geometry validation.",
+  "description": "Validated 3D CAD modeling for AI agents via CAiD + OCCT. 107 tools across 22 modules.",
   "repository": {
     "url": "https://github.com/dreliq9/caid-mcp",
     "source": "github"
   },
-  "version": "0.3.2",
+  "version": "0.5.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "caid-mcp",
-      "version": "0.3.2",
+      "version": "0.5.0",
       "transport": {
         "type": "stdio"
       },
