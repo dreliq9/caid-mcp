@@ -110,6 +110,12 @@ def register(mcp: FastMCP) -> None:
             shape = pipe.Shape()
 
             vol = shape_volume(shape)
+            if vol < 1e-6:
+                return (
+                    f"WARN Sweep produced degenerate geometry (volume≈0). "
+                    f"The path may be too tight for the profile, or points may be "
+                    f"too close together. Shape NOT stored."
+                )
             store_object(name, shape)
             return f"OK Swept profile ({len(profile)} pts) along path ({len(path)} pts) -> '{name}' | volume={vol:.1f}mm3"
         except Exception as e:
@@ -149,6 +155,13 @@ def register(mcp: FastMCP) -> None:
             shape = pipe.Shape()
 
             vol = shape_volume(shape)
+            if vol < 1e-6:
+                return (
+                    f"WARN Sweep produced degenerate geometry (volume≈0). "
+                    f"The path may be too tight for radius={radius}mm, or points may be "
+                    f"too close together. Try a gentler curve or smaller radius. "
+                    f"Shape NOT stored — use a different approach."
+                )
             store_object(name, shape)
             return f"OK Swept circle (r={radius}) along path ({len(path)} pts) -> '{name}' | volume={vol:.1f}mm3"
         except Exception as e:

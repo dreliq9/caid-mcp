@@ -124,9 +124,9 @@ def register(mcp: FastMCP) -> None:
             return f"FAIL Error: {e}"
 
     @mcp.tool()
-    def fillet_edges(name: str, radius: float, edge_selector: Optional[str] = None,
+    def fillet_solid_edges(name: str, radius: float, edge_selector: Optional[str] = None,
                      edge_indices: Optional[str] = None) -> str:
-        """Apply a fillet (round) to edges of an object.
+        """Fillet (round) edges on a 3D solid.
 
         Args:
             name: Name of existing object to modify.
@@ -165,9 +165,9 @@ def register(mcp: FastMCP) -> None:
             return f"FAIL Error: {e}"
 
     @mcp.tool()
-    def chamfer_edges(name: str, length: float, edge_selector: Optional[str] = None,
+    def chamfer_solid_edges(name: str, length: float, edge_selector: Optional[str] = None,
                       edge_indices: Optional[str] = None) -> str:
-        """Apply a chamfer (bevel) to edges of an object.
+        """Chamfer (bevel) edges on a 3D solid.
 
         Args:
             name: Name of existing object to modify.

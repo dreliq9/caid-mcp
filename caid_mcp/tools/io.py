@@ -1,36 +1,13 @@
-"""Import/export tools for BREP and STEP formats — backed by caid.export."""
+"""Import tools for BREP and STEP formats — backed by caid."""
 
-from typing import Optional
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 import caid
-from caid_mcp.core import require_object, store_object, OUTPUT_DIR
+from caid_mcp.core import store_object, OUTPUT_DIR
 
 
 def register(mcp: FastMCP) -> None:
-    """Register import/export tools."""
-
-    @mcp.tool()
-    def export_brep(name: str, filename: Optional[str] = None) -> str:
-        """Export an object as a BREP file (native OCCT format, lossless, fastest).
-
-        Args:
-            name: Name of the object to export.
-            filename: Output filename (default: {name}.brep).
-        """
-        try:
-            shape = require_object(name)
-            fname = filename or f"{name}.brep"
-            if not fname.endswith(".brep"):
-                fname += ".brep"
-            path = OUTPUT_DIR / fname
-            fr = caid.to_brep(shape, path)
-            if fr.valid:
-                size_kb = path.stat().st_size / 1024
-                return f"OK Exported BREP: {path}  ({size_kb:.1f} KB)"
-            return f"FAIL BREP export: {fr.diagnostics.get('reason', 'unknown')}"
-        except Exception as e:
-            return f"FAIL Error exporting BREP: {e}"
+    """Register import tools."""
 
     @mcp.tool()
     def import_step(filename: str, name: str) -> str:

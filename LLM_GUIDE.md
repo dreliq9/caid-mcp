@@ -31,8 +31,8 @@ Objects in the scene are raw `TopoDS_Shape` objects (Solid/Compound), not workpl
 - `add_hole` takes **radius**, but doubles it internally for the diameter-based hole operation. For metric screws: M2=r1.0, M2.5=r1.25, M3=r1.5, M4=r2.0, M5=r2.5, M6=r3.0
 - `create_extruded_polygon` and `create_revolved_profile` take `points` as a **JSON string**, not a native array. Always pass: `points='[[0,0],[10,0],[10,10]]'`
 - `create_revolved_profile` revolves around the **Y axis**, not Z. Profile points are in the XZ plane.
-- `fillet_edges` and `chamfer_edges` accept either `edge_selector` (string like `">Z"`, `"|X"`) or `edge_indices` (JSON array like `"[0, 3, 7]"` from `list_edges`). Indices override the selector.
-- `fillet_edges` radius must be **less than half the shortest edge**. Use `list_edges` to check edge lengths first.
+- `fillet_solid_edges` and `chamfer_solid_edges` accept either `edge_selector` (string like `">Z"`, `"|X"`) or `edge_indices` (JSON array like `"[0, 3, 7]"` from `list_edges`). Indices override the selector.
+- `fillet_solid_edges` radius must be **less than half the shortest edge**. Use `list_edges` to check edge lengths first.
 - `add_hole` accepts either `face_selector` (string) or `face_index` (int from `list_faces`). Default is `">Z"` (top face in global coordinates).
 - `shell_object` accepts either `face_to_remove` (string) or `face_index` (int). Default removes top face.
 - `shell_object` thickness is applied inward. Just pass a positive number.

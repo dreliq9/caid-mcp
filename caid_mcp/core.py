@@ -51,6 +51,32 @@ scene: dict[str, Any] = {}
 # Assembly state — tracks named assemblies
 assemblies: dict[str, Assembly] = {}
 
+# Object properties — per-object metadata for rendering and organization
+# Keys: object names → dict with color, visible, locked, material, layer
+object_properties: dict[str, dict] = {}
+
+# Groups — lightweight name→[names] mapping (not geometry)
+groups: dict[str, list[str]] = {}
+
+# Layers — name→{color, visible} mapping
+layers: dict[str, dict] = {"0": {"color": "#4a90d9", "visible": True}}
+
+
+def get_object_color(name: str) -> Optional[str]:
+    """Get per-object color from properties, or None for default."""
+    props = object_properties.get(name, {})
+    return props.get("color")
+
+
+def is_object_visible(name: str) -> bool:
+    """Check if an object is visible (respects both object and layer visibility)."""
+    props = object_properties.get(name, {})
+    if not props.get("visible", True):
+        return False
+    layer_name = props.get("layer", "0")
+    layer = layers.get(layer_name, {"visible": True})
+    return layer.get("visible", True)
+
 
 # ---------------------------------------------------------------------------
 # OCP shape helpers
@@ -260,6 +286,103 @@ def safe_boolean(shape_a, shape_b, operation: str, timeout: int = 60):
                      if k not in ("ok", "valid", "volume_after", "surface_area")},
     )
     return fr
+
+
+# ---------------------------------------------------------------------------
+# Flexible parameter parsing — accept multiple point/coordinate formats
+# ---------------------------------------------------------------------------
+
+def parse_point(value) -> tuple[float, float, float]:
+    """Parse a point from various LLM-friendly formats.
+
+    Accepts:
+      - [x, y, z] list/tuple
+      - {"x": 1, "y": 2, "z": 3} dict
+      - "1, 2, 3" comma-separated string
+      - [x, y] (z defaults to 0)
+
+    Returns (x, y, z) tuple. Raises ValueError on failure.
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) == 2:
+            return (float(value[0]), float(value[1]), 0.0)
+        elif len(value) == 3:
+            return (float(value[0]), float(value[1]), float(value[2]))
+        else:
+            raise ValueError(f"Point must have 2 or 3 values, got {len(value)}")
+    elif isinstance(value, dict):
+        return (
+            float(value.get("x", 0)),
+            float(value.get("y", 0)),
+            float(value.get("z", 0)),
+        )
+    elif isinstance(value, str):
+        parts = [p.strip() for p in value.split(",")]
+        if len(parts) == 2:
+            return (float(parts[0]), float(parts[1]), 0.0)
+        elif len(parts) == 3:
+            return (float(parts[0]), float(parts[1]), float(parts[2]))
+        else:
+            raise ValueError(f"Point string must have 2 or 3 comma-separated values, got: {value}")
+    else:
+        raise ValueError(f"Cannot parse point from {type(value).__name__}: {value}")
+
+
+def parse_points(value) -> list[tuple[float, float, float]]:
+    """Parse a list of points from various formats.
+
+    Accepts a JSON string or a Python list of point values.
+    Each point is parsed via parse_point().
+    """
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"Expected a list of points, got {type(value).__name__}")
+    return [parse_point(p) for p in value]
+
+
+# ---------------------------------------------------------------------------
+# Adaptive response size — estimate and compress base64 PNG payloads
+# ---------------------------------------------------------------------------
+
+_ADAPTIVE_THRESHOLD_BYTES = 200_000  # ~200 KB uncompressed PNG
+
+
+def adaptive_compress_png(png_path: Path, max_bytes: int = _ADAPTIVE_THRESHOLD_BYTES) -> Path:
+    """Compress a PNG if it exceeds the threshold. Returns the (possibly new) path.
+
+    If the PNG is under the threshold, returns the original path unchanged.
+    If over, re-saves with reduced quality/size to fit.
+    """
+    try:
+        size = png_path.stat().st_size
+        if size <= max_bytes:
+            return png_path
+
+        from PIL import Image
+        img = Image.open(str(png_path))
+
+        # Strategy: reduce resolution until under threshold
+        for scale in (0.75, 0.5, 0.35, 0.25):
+            new_w = int(img.width * scale)
+            new_h = int(img.height * scale)
+            resized = img.resize((new_w, new_h), Image.LANCZOS)
+            compressed_path = png_path.with_suffix(".compressed.png")
+            resized.save(str(compressed_path), optimize=True)
+            if compressed_path.stat().st_size <= max_bytes:
+                # Replace original
+                compressed_path.replace(png_path)
+                log.info("Adaptive compress: %s scaled to %dx%d (%.1f KB)",
+                         png_path.name, new_w, new_h,
+                         png_path.stat().st_size / 1024)
+                return png_path
+            compressed_path.unlink(missing_ok=True)
+
+        # If still too large at 25%, just return as-is
+        return png_path
+    except Exception as e:
+        log.warning("Adaptive compress failed: %s", e)
+        return png_path
 
 
 def _cleanup_dir(d: Path) -> None:

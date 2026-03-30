@@ -8,7 +8,7 @@ Every geometry operation is validated through CAiD's ForgeResult system, which t
 
 ```
 You: "Make a box with rounded edges and a hole through the top, show me a preview"
-Claude → create_box → fillet_edges → add_hole → preview_object → export_stl
+Claude → create_box → fillet_solid_edges → add_hole → preview_object → export_stl
 Result: SVG preview + ~/cadquery-output/my_part.stl
 ```
 
@@ -154,7 +154,7 @@ measure_distance(a, b)      → min distance between two objects
 
 Instead of guessing selector strings like `">Z"`, the LLM can now:
 1. Call `list_edges` to see all edges with their indices
-2. Call `fillet_edges(name, radius, edge_indices="[2, 5, 8]")` to target exactly those edges
+2. Call `fillet_solid_edges(name, radius, edge_indices="[2, 5, 8]")` to target exactly those edges
 
 Same for `add_hole(face_index=3)` and `shell_object(face_index=0)`.
 

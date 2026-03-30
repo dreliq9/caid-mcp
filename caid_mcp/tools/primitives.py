@@ -5,7 +5,7 @@ import math
 from caid.vector import Vector
 from mcp.server.fastmcp import FastMCP
 import caid
-from caid_mcp.core import store_object, format_result, shape_volume, _unwrap
+from caid_mcp.core import store_object, require_object, format_result, shape_volume, _unwrap
 
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace
 from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeRevol
@@ -30,6 +30,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def create_box(
         name: str, length: float, width: float, height: float, centered: bool = True,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
     ) -> str:
         """Create a rectangular box (cuboid).
 
@@ -39,6 +40,7 @@ def register(mcp: FastMCP) -> None:
             width: Size along Y axis (mm).
             height: Size along Z axis (mm).
             centered: If True, center on origin. If False, corner at origin.
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             if centered:
@@ -49,6 +51,11 @@ def register(mcp: FastMCP) -> None:
             msg = format_result(fr, f"Created box '{name}': {length} x {width} x {height} mm")
             if fr.shape is not None:
                 store_object(name, fr.shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
             return msg
         except Exception as e:
             return f"FAIL Error creating box: {e}"
@@ -56,6 +63,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def create_cylinder(
         name: str, radius: float, height: float, centered: bool = True,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
     ) -> str:
         """Create a cylinder.
 
@@ -64,6 +72,7 @@ def register(mcp: FastMCP) -> None:
             radius: Radius of the cylinder (mm).
             height: Height of the cylinder (mm).
             centered: If True, center on origin.
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             if centered:
@@ -74,29 +83,46 @@ def register(mcp: FastMCP) -> None:
             msg = format_result(fr, f"Created cylinder '{name}': r={radius}, h={height} mm")
             if fr.shape is not None:
                 store_object(name, fr.shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
             return msg
         except Exception as e:
             return f"FAIL Error creating cylinder: {e}"
 
     @mcp.tool()
-    def create_sphere(name: str, radius: float) -> str:
+    def create_sphere(
+        name: str, radius: float,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
+    ) -> str:
         """Create a sphere centered at the origin.
 
         Args:
             name: Unique name for this object.
             radius: Radius of the sphere (mm).
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             fr = caid.sphere(radius)
             msg = format_result(fr, f"Created sphere '{name}': r={radius} mm")
             if fr.shape is not None:
                 store_object(name, fr.shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
             return msg
         except Exception as e:
             return f"FAIL Error creating sphere: {e}"
 
     @mcp.tool()
-    def create_cone(name: str, radius1: float, radius2: float, height: float) -> str:
+    def create_cone(
+        name: str, radius1: float, radius2: float, height: float,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
+    ) -> str:
         """Create a cone or truncated cone (frustum).
 
         Args:
@@ -104,36 +130,54 @@ def register(mcp: FastMCP) -> None:
             radius1: Bottom radius (mm).
             radius2: Top radius (mm). Use 0 for a pointed cone.
             height: Height of the cone (mm).
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             fr = caid.cone(radius1, radius2, height)
             msg = format_result(fr, f"Created cone '{name}': r1={radius1}, r2={radius2}, h={height} mm")
             if fr.shape is not None:
                 store_object(name, fr.shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
             return msg
         except Exception as e:
             return f"FAIL Error creating cone: {e}"
 
     @mcp.tool()
-    def create_torus(name: str, major_radius: float, minor_radius: float) -> str:
+    def create_torus(
+        name: str, major_radius: float, minor_radius: float,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
+    ) -> str:
         """Create a torus (donut shape).
 
         Args:
             name: Unique name for this object.
             major_radius: Distance from center of torus to center of tube (mm).
             minor_radius: Radius of the tube (mm).
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             fr = caid.torus(major_radius, minor_radius)
             msg = format_result(fr, f"Created torus '{name}': R={major_radius}, r={minor_radius} mm")
             if fr.shape is not None:
                 store_object(name, fr.shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
             return msg
         except Exception as e:
             return f"FAIL Error creating torus: {e}"
 
     @mcp.tool()
-    def create_extruded_polygon(name: str, points: str, height: float) -> str:
+    def create_extruded_polygon(
+        name: str, points: str, height: float,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
+    ) -> str:
         """Create a 3D solid by extruding a 2D polygon.
 
         Args:
@@ -141,6 +185,7 @@ def register(mcp: FastMCP) -> None:
             points: JSON array of [x, y] coordinate pairs defining the polygon.
                     Example: "[[0,0], [10,0], [10,10], [5,15], [0,10]]"
             height: Extrusion height (mm).
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             pts = [tuple(p) for p in json.loads(points)]
@@ -148,13 +193,21 @@ def register(mcp: FastMCP) -> None:
             face = BRepBuilderAPI_MakeFace(wire).Face()
             shape = BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, height)).Shape()
             store_object(name, shape)
-            vol = shape_volume(shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
+            vol = shape_volume(require_object(name))
             return f"OK Created extruded polygon '{name}': {len(pts)} vertices, h={height} mm | volume={vol:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"
 
     @mcp.tool()
-    def create_revolved_profile(name: str, points: str, angle: float = 360.0) -> str:
+    def create_revolved_profile(
+        name: str, points: str, angle: float = 360.0,
+        center_x: float = 0, center_y: float = 0, center_z: float = 0,
+    ) -> str:
         """Create a solid of revolution by rotating a 2D profile around the Y axis.
 
         The profile is defined in the XZ plane (first coord = X/radial,
@@ -167,6 +220,7 @@ def register(mcp: FastMCP) -> None:
             points: JSON array of [x, z] coordinate pairs defining the profile.
                     Example: "[[0,0], [5,0], [5,10], [3,12], [0,12]]"
             angle: Angle of revolution in degrees (default 360 for full revolution).
+            center_x/y/z: Position the object at this point (default: origin).
         """
         try:
             pts = [tuple(p) for p in json.loads(points)]
@@ -184,7 +238,12 @@ def register(mcp: FastMCP) -> None:
             axis = gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1))
             shape = BRepPrimAPI_MakeRevol(face, axis, math.radians(angle)).Shape()
             store_object(name, shape)
-            vol = shape_volume(shape)
+            if center_x != 0 or center_y != 0 or center_z != 0:
+                shape = require_object(name)
+                fr = caid.translate(shape, Vector(center_x, center_y, center_z))
+                if fr.shape is not None:
+                    store_object(name, fr.shape)
+            vol = shape_volume(require_object(name))
             return f"OK Created revolved solid '{name}': {len(pts)} profile points, {angle} deg | volume={vol:.1f}mm3"
         except Exception as e:
             return f"FAIL Error: {e}"

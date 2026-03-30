@@ -4,7 +4,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 from caid_mcp.core import (
     require_object, store_object, scene,
-    format_result, safe_boolean,
+    format_result, safe_boolean, shape_volume,
 )
 
 
@@ -43,9 +43,32 @@ def register(mcp: FastMCP) -> None:
         """
         try:
             a, b = require_object(name_a), require_object(name_b)
+
+            # Guard: refuse to cut with degenerate tool geometry
+            tool_vol = shape_volume(b)
+            if tool_vol < 1e-6:
+                return (
+                    f"FAIL Tool object '{name_b}' has zero volume (degenerate geometry). "
+                    f"Cannot use it for boolean cut — it would corrupt the target. "
+                    f"Check that '{name_b}' is a valid solid."
+                )
+
+            base_vol = shape_volume(a)
             fr = safe_boolean(a, b, "cut")
             if isinstance(fr, dict):
                 return fr["msg"]
+
+            # Guard: if the result volume dropped to near-zero, the cut
+            # produced degenerate geometry — don't store it
+            if fr.shape is not None:
+                result_vol = shape_volume(fr.shape)
+                if base_vol > 1e-6 and result_vol < 1e-6:
+                    return (
+                        f"FAIL Cut produced degenerate geometry (volume went from "
+                        f"{base_vol:.1f} to ≈0). The tool may have invalid geometry "
+                        f"that corrupted the result. Original '{name_a}' is preserved."
+                    )
+
             msg = format_result(fr, f"Cut: '{name_a}' - '{name_b}' -> '{result_name}'")
             if fr.shape is not None:
                 store_object(result_name, fr.shape)

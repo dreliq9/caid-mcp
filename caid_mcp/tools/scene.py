@@ -1,14 +1,16 @@
-"""Scene management tools (list, delete, clear, duplicate, info)."""
+"""Scene management tools (list, delete, clear, duplicate, info, server_info)."""
 
 import json
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 import caid
 from caid_mcp.core import (
     scene, require_object, store_object, object_summary,
-    _unwrap, shape_volume, shape_area, shape_bounding_box,
+    _unwrap, shape_bounding_box,
+    OUTPUT_DIR, groups, layers, object_properties,
 )
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX
+
+_DEFAULT_LAYERS = {"0": {"color": "#4a90d9", "visible": True}}
 from OCP.BRepTools import BRepTools
 from OCP.BRep import BRep_Builder
 from OCP.TopoDS import TopoDS_Shape
@@ -26,45 +28,6 @@ def register(mcp: FastMCP) -> None:
         return f"Scene ({len(scene)} objects):\n" + "\n".join(lines)
 
     @mcp.tool()
-    def get_object_info(name: str) -> str:
-        """Get detailed geometric information about an object.
-
-        Args:
-            name: Name of the object.
-        """
-        try:
-            shape = require_object(name)
-            bb = shape_bounding_box(shape)
-            validity = caid.check_valid(shape)
-
-            def _count_topo(topo_type):
-                wrapped = _unwrap(shape)
-                exp = TopExp_Explorer(wrapped, topo_type)
-                count = 0
-                while exp.More():
-                    count += 1
-                    exp.Next()
-                return count
-
-            info = {
-                "name": name,
-                "bounding_box": {
-                    "x_min": round(bb["xmin"], 3), "x_max": round(bb["xmax"], 3),
-                    "y_min": round(bb["ymin"], 3), "y_max": round(bb["ymax"], 3),
-                    "z_min": round(bb["zmin"], 3), "z_max": round(bb["zmax"], 3),
-                    "dimensions": f"{bb['xlen']:.2f} x {bb['ylen']:.2f} x {bb['zlen']:.2f} mm",
-                },
-                "volume_mm3": round(shape_volume(shape), 3),
-                "num_faces": _count_topo(TopAbs_FACE),
-                "num_edges": _count_topo(TopAbs_EDGE),
-                "num_vertices": _count_topo(TopAbs_VERTEX),
-                "is_valid": validity.get("is_valid", "unknown"),
-            }
-            return json.dumps(info, indent=2)
-        except Exception as e:
-            return f"FAIL Error: {e}"
-
-    @mcp.tool()
     def delete_object(name: str) -> str:
         """Remove an object from the scene.
 
@@ -73,6 +36,10 @@ def register(mcp: FastMCP) -> None:
         """
         if name in scene:
             del scene[name]
+            object_properties.pop(name, None)
+            for members in groups.values():
+                if name in members:
+                    members.remove(name)
             return f"OK Deleted '{name}'"
         return f"FAIL Object '{name}' not found"
 
@@ -109,4 +76,38 @@ def register(mcp: FastMCP) -> None:
         """Remove all objects from the scene."""
         count = len(scene)
         scene.clear()
+        object_properties.clear()
+        groups.clear()
+        layers.clear()
+        layers.update(_DEFAULT_LAYERS)
         return f"OK Cleared scene ({count} objects removed)"
+
+    @mcp.tool()
+    def server_info() -> str:
+        """Get CAiD MCP server information.
+
+        Returns version, tool count, output directory, scene statistics,
+        and available tool categories. Useful for LLM self-orientation
+        at the start of a conversation.
+        """
+        categories = [
+            "primitives", "modify", "transforms", "booleans", "scene",
+            "export", "advanced", "heal", "io", "assembly", "compound",
+            "query", "view", "sweep", "fasteners", "history",
+            "parts_warehouse", "parts_library", "parts_user",
+            "curves", "split", "scene_org",
+        ]
+        info = {
+            "server": "CAiD MCP",
+            "version": "0.5.0",
+            "tools": 107,
+            "modules": len(categories),
+            "categories": categories,
+            "output_directory": str(OUTPUT_DIR),
+            "scene": {
+                "objects": len(scene),
+                "groups": len(groups),
+                "layers": len(layers),
+            },
+        }
+        return json.dumps(info, indent=2)

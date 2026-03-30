@@ -313,32 +313,66 @@ def register(mcp: FastMCP) -> None:
             return f"FAIL Error: {e}"
 
     @mcp.tool()
-    def measure_object(name: str) -> str:
-        """Get comprehensive measurements: volume, surface area, center of mass,
-        bounding box, and counts of faces/edges/vertices.
+    def inspect_object(name: str, format: str = "text") -> str:
+        """Get a complete description of an object — dimensions, volume, topology,
+        validity, and bounding box. The ONE tool for "tell me about this object."
 
         Args:
             name: Name of the object.
+            format: Output format — "text" for natural language (default, best for
+                   reasoning), or "json" for structured data (best for calculations).
         """
         try:
             shape = require_object(name)
             bb = shape_bounding_box(shape)
             com = shape_center(shape)
-            info = {
-                "name": name,
-                "volume_mm3": round(shape_volume(shape), 3),
-                "surface_area_mm2": round(shape_area(shape), 3),
-                "center_of_mass": [round(com[0], 3), round(com[1], 3), round(com[2], 3)],
-                "bounding_box": {
-                    "min": [round(bb["xmin"], 3), round(bb["ymin"], 3), round(bb["zmin"], 3)],
-                    "max": [round(bb["xmax"], 3), round(bb["ymax"], 3), round(bb["zmax"], 3)],
-                    "size": [round(bb["xlen"], 3), round(bb["ylen"], 3), round(bb["zlen"], 3)],
-                },
-                "num_faces": len(_get_faces(shape)),
-                "num_edges": len(_get_edges(shape)),
-                "num_vertices": len(_get_vertices(shape)),
-            }
-            return json.dumps(info, indent=2)
+            vol = shape_volume(shape)
+            area = shape_area(shape)
+            faces = _get_faces(shape)
+            edges = _get_edges(shape)
+            verts = _get_vertices(shape)
+
+            if format.lower() == "json":
+                info = {
+                    "name": name,
+                    "volume_mm3": round(vol, 3),
+                    "surface_area_mm2": round(area, 3),
+                    "center_of_mass": [round(com[0], 3), round(com[1], 3), round(com[2], 3)],
+                    "bounding_box": {
+                        "min": [round(bb["xmin"], 3), round(bb["ymin"], 3), round(bb["zmin"], 3)],
+                        "max": [round(bb["xmax"], 3), round(bb["ymax"], 3), round(bb["zmax"], 3)],
+                        "size": [round(bb["xlen"], 3), round(bb["ylen"], 3), round(bb["zlen"], 3)],
+                    },
+                    "num_faces": len(faces),
+                    "num_edges": len(edges),
+                    "num_vertices": len(verts),
+                }
+                return json.dumps(info, indent=2)
+
+            # Text format — natural language
+            face_types: dict[str, int] = {}
+            for f in faces:
+                ft = _face_type(f)
+                face_types[ft] = face_types.get(ft, 0) + 1
+            type_summary = ", ".join(
+                f"{count} {ftype.lower()}" for ftype, count in
+                sorted(face_types.items(), key=lambda x: -x[1])
+            )
+
+            lines = [
+                f"'{name}' is a solid occupying {bb['xlen']:.2f} x {bb['ylen']:.2f} x {bb['zlen']:.2f} mm.",
+                f"It has {len(faces)} faces ({type_summary}), {len(edges)} edges, and {len(verts)} vertices.",
+                f"Volume: {vol:.2f} mm\u00b3. Surface area: {area:.2f} mm\u00b2.",
+                f"Center of mass: ({com[0]:.2f}, {com[1]:.2f}, {com[2]:.2f}).",
+                f"Bounding box: ({bb['xmin']:.2f}, {bb['ymin']:.2f}, {bb['zmin']:.2f}) to ({bb['xmax']:.2f}, {bb['ymax']:.2f}, {bb['zmax']:.2f}).",
+            ]
+            dims = sorted([bb["xlen"], bb["ylen"], bb["zlen"]], reverse=True)
+            if dims[0] < 0.01:
+                lines.append("The object is essentially a point or degenerate shape.")
+            elif max(dims) / max(dims[2], 0.001) > 20:
+                lines.append("The object is very thin or elongated.")
+
+            return "\n".join(lines)
         except Exception as e:
             return f"FAIL Error: {e}"
 

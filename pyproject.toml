@@ -1,6 +1,6 @@
 [project]
 name = "caid-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "MCP server giving AI agents validated 3D modeling via CAiD + OCCT"
 readme = "README.md"
 license = {text = "MIT"}
@@ -11,6 +11,7 @@ authors = [
 ]
 dependencies = [
     "mcp>=1.2.0",
+    "Pillow>=10.0",
     # caid must be installed separately — see README for instructions
 ]
 
