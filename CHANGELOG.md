@@ -1,5 +1,60 @@
 # Changelog
 
+## v0.6.0 — 2026-04-16
+
+### Structured tool outputs (breaking change for some clients)
+
+Tools in `primitives` and `query` now return Pydantic models instead of formatted
+strings or `json.dumps` blobs. FastMCP serializes each model into BOTH:
+
+- `content` (a human-readable text block via `__str__` — old clients still work)
+- `structuredContent` (typed JSON the agent can read directly)
+
+Agents no longer have to grep `"OK Created..."` or `json.loads(tool_text)` to pull
+volume, bbox, or face counts out of a string.
+
+### What changed
+
+- **New module `caid_mcp/types.py`** — shared Pydantic result models:
+  `ShapeResult`, `BoundingBox`, `Point3`, `EdgeInfo`, `FaceInfo`,
+  `EdgeListResult`, `FaceListResult`, `DistanceResult`, `InspectResult`,
+  `MassResult`, `NearestEdgesResult`, `NearestFacesResult`.
+- **`primitives.py`** — all 7 creators return `ShapeResult`. Volume + bbox
+  are reported on every successful create (no extra tool call required).
+- **`query.py`** — all 7 query tools return typed models. `mass_properties`
+  now constrains `material` to a `Literal[...]` of 28 names, so typos
+  (`"aluminium"`) are rejected by Pydantic before the tool body runs.
+- **Validated parameters** — primitives use `Field(gt=0, ...)` constraints;
+  `find_*_near_point` clamps `count` to `[1, 50]`; `create_revolved_profile`
+  clamps `angle` to `(0, 360]`.
+- **Error semantics** — `mass_properties` raises `ToolError` (sets
+  `isError: true`) instead of returning a `"FAIL ..."` string that looks
+  like success to clients that only check the error flag.
+
+### Removed parameters (breaking)
+
+- **`inspect_object(format="text"|"json")`** — `format` parameter removed.
+  Both representations are returned every call (text via `content`,
+  structured via `structuredContent`). Agents pick which to read.
+
+### Dependency updates
+
+- `mcp>=1.25,<2` (was `>=1.2.0`). Current SDK is 1.27; v2 is in development
+  with breaking transport changes — the SDK authors' own pinning advice.
+- `pydantic>=2.7` added as an explicit dependency.
+
+### Migration
+
+Most agents need no changes — they read the `content` text block and that
+still works. If you parse tool results programmatically:
+
+- Replace string regex with `result.structuredContent.volume_mm3` (or your
+  client's equivalent typed-access pattern).
+- If you called `inspect_object(name, format="json")`, drop the `format`
+  argument; structured fields are always present.
+
+---
+
 ## v0.5.0 — 2026-03-29
 
 ### AI Usability Consolidation (breaking changes)
