@@ -40,6 +40,7 @@ caid-mcp/
 ├── caid_mcp/
 │   ├── __init__.py
 │   ├── core.py                  # Scene state, shared utilities
+│   ├── types.py                 # Pydantic result models (v0.6.0+)
 │   └── tools/
 │       ├── primitives.py        # Shape creation (7 tools)
 │       ├── modify.py            # Holes, fillets, chamfers, shell (4 tools)
@@ -138,6 +139,21 @@ claude mcp list       # from terminal
 ---
 
 ## Key Features
+
+### Structured tool outputs (v0.6.0+)
+
+Tools in `primitives` and `query` return Pydantic models. Each response carries
+both a human-readable text block (via `__str__`) and a typed `structuredContent`
+JSON payload. Agents can read fields like `result.volume_mm3` or
+`result.bounding_box.xlen` directly — no more regex on `"OK Created..."` strings.
+
+```
+create_box("lid", 50, 30, 5)
+  text:        "OK Created box 'lid' | volume=7500.0mm3 | bbox=50.00x30.00x5.00mm"
+  structured:  {ok: true, name: "lid", kind: "box", volume_mm3: 7500.0, bbox: {...}}
+```
+
+Old clients that only read text still work — this is additive, not a wire change.
 
 ### Geometry Query and Measurement
 
