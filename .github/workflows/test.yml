@@ -9,26 +9,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -l {0}
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          channels: conda-forge
-          activate-environment: cadforge
-
-      - name: Install CadQuery
-        run: conda install -y cadquery
 
       - name: Install CAiD and caid-mcp
         run: |
-          pip install caid
-          pip install -e ".[dev]"
+          python -m pip install "caid @ git+https://github.com/dreliq9/CAiD.git"
+          python -m pip install -e ".[dev]"
 
       - name: Run tests
         run: pytest tests/ -v --tb=short
