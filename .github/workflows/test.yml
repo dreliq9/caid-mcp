@@ -27,7 +27,7 @@ jobs:
 
       - name: Install CAiD and caid-mcp
         run: |
-          pip install caid
+          pip install "caid @ git+https://github.com/dreliq9/CAiD.git"
           pip install -e ".[dev]"
 
       - name: Run tests
